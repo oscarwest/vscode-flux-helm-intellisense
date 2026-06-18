@@ -2,7 +2,7 @@
   "name": "vscode-flux-helm-intellisense",
   "displayName": "Flux Helm IntelliSense",
   "description": "Helm values IntelliSense for Flux HelmRelease spec.values blocks.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "publisher": "westtechnologyconsultingab",
   "license": "MIT",
   "repository": {
@@ -13,6 +13,10 @@
     "url": "https://github.com/oscarwest/vscode-flux-helm-intellisense/issues"
   },
   "homepage": "https://github.com/oscarwest/vscode-flux-helm-intellisense#readme",
+  "vsce": {
+    "baseContentUrl": "https://github.com/oscarwest/vscode-flux-helm-intellisense/blob/main",
+    "baseImagesUrl": "https://raw.githubusercontent.com/oscarwest/vscode-flux-helm-intellisense/main"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -29,6 +33,7 @@
     "Programming Languages",
     "Other"
   ],
+  "icon": "assets/icon.png",
   "galleryBanner": {
     "color": "#1e1e1e",
     "theme": "dark"
