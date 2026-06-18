@@ -56,7 +56,8 @@ Example:
 ```json
 {
   "fluxHelmValues.repositorySearchPaths": [
-    "/Users/oscarwest/projects/vce/platform/**/*.yaml",
+    "/Users/me/projects/**/*.yaml",
+    "C:\\Users\\me\\projects\\**\\*.yaml",
     "../shared-flux-sources"
   ]
 }
