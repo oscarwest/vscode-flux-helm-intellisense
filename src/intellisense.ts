@@ -17,6 +17,12 @@ interface ValuesFallbackEntry {
   description?: string;
 }
 
+interface MapEntry {
+  key: string;
+  value: Node | undefined;
+  keyNode: Node | undefined;
+}
+
 function isVisibleChartKey(key: string): boolean {
   return !key.startsWith('_');
 }
@@ -240,6 +246,24 @@ function getPairDescription(item: Pair<unknown, unknown>): string | undefined {
 function getValuesFallbackEntries(
   node: Node | undefined,
 ): ValuesFallbackEntry[] {
+  return getMapEntriesWithNodes(node).flatMap((item) => {
+    if (!isVisibleChartKey(item.key)) {
+      return [];
+    }
+    return [
+      {
+        key: item.key,
+        value: item.value,
+        description: getPairDescription({
+          key: item.keyNode,
+          value: item.value,
+        } as Pair<unknown, unknown>),
+      } satisfies ValuesFallbackEntry,
+    ];
+  });
+}
+
+function getMapEntriesWithNodes(node: Node | undefined): MapEntry[] {
   if (!isMap(node)) {
     return [];
   }
@@ -248,15 +272,12 @@ function getValuesFallbackEntries(
     if (!isScalar(item.key) || typeof item.key.value !== 'string') {
       return [];
     }
-    if (!isVisibleChartKey(item.key.value)) {
-      return [];
-    }
     return [
       {
         key: item.key.value,
         value: item.value as Node | undefined,
-        description: getPairDescription(item),
-      } satisfies ValuesFallbackEntry,
+        keyNode: item.key as Node | undefined,
+      },
     ];
   });
 }
@@ -311,6 +332,37 @@ function getFallbackEntryAtPath(
   }
 
   return undefined;
+}
+
+function getValuesNodeAtPath(
+  root: Node | undefined,
+  path: string[],
+): Node | undefined {
+  let current = root;
+  for (const segment of path) {
+    if (isMap(current)) {
+      const entry = getValuesFallbackEntries(current).find(
+        (candidate) => candidate.key === segment,
+      );
+      current = entry?.value;
+      continue;
+    }
+    if (isSeq(current)) {
+      if (current.items.length === 0) {
+        return undefined;
+      }
+      const itemIndex = Number.parseInt(segment, 10);
+      current = current.items[
+        Number.isNaN(itemIndex)
+          ? 0
+          : Math.min(itemIndex, current.items.length - 1)
+      ] as Node | undefined;
+      continue;
+    }
+    return undefined;
+  }
+
+  return current;
 }
 
 async function readSchema(
@@ -505,44 +557,78 @@ export async function provideSchemaDiagnostics(
   context: ValuesContext,
 ): Promise<vscode.Diagnostic[]> {
   const schema = await readSchema(metadata);
-  if (!schema) {
+  const valuesDoc = await readValuesDocument(metadata);
+  if (!schema && !valuesDoc) {
     return [];
   }
 
   const diagnostics: vscode.Diagnostic[] = [];
-  const text = document.getText();
+
+  const diagnosticForEntry = (
+    entry: MapEntry,
+    message: string,
+  ): vscode.Diagnostic | undefined => {
+    if (!entry.keyNode?.range) {
+      return undefined;
+    }
+    const start = document.positionAt(entry.keyNode.range[0]);
+    const end = document.positionAt(entry.keyNode.range[1]);
+    return new vscode.Diagnostic(
+      new vscode.Range(start, end),
+      message,
+      vscode.DiagnosticSeverity.Warning,
+    );
+  };
 
   const visitNode = (node: Node | undefined, path: string[]): void => {
-    const currentSchema = getSchemaAtPath(
-      schema,
-      path.filter((segment) => !/^\d+$/.test(segment)),
-    );
-    if (!node || !currentSchema) {
+    if (!node) {
       return;
     }
     if (isMap(node)) {
-      for (const entry of getMapEntries(node)) {
+      const schemaPath = path.filter((segment) => !/^\d+$/.test(segment));
+      const currentSchema = schema
+        ? getSchemaAtPath(schema, schemaPath)
+        : undefined;
+      const currentValuesNode = getValuesNodeAtPath(
+        valuesDoc?.contents as Node | undefined,
+        path,
+      );
+      const valuesEntries = new Set(
+        getValuesFallbackEntries(currentValuesNode).map((entry) => entry.key),
+      );
+
+      for (const entry of getMapEntriesWithNodes(node)) {
+        let addedDiagnostic = false;
         if (
+          currentSchema &&
           !currentSchema.properties?.[entry.key] &&
           currentSchema.additionalProperties === false
         ) {
-          const keyText = `${entry.key}:`;
-          const offset = text.indexOf(
-            keyText,
-            context.valuesNode?.range?.[0] ?? 0,
+          const diagnostic = diagnosticForEntry(
+            entry,
+            `Unknown chart value key '${entry.key}'.`,
           );
-          if (offset !== -1) {
-            const start = document.positionAt(offset);
-            const end = document.positionAt(offset + entry.key.length);
-            diagnostics.push(
-              new vscode.Diagnostic(
-                new vscode.Range(start, end),
-                `Unknown chart value key '${entry.key}'.`,
-                vscode.DiagnosticSeverity.Warning,
-              ),
-            );
+          if (diagnostic) {
+            diagnostics.push(diagnostic);
+            addedDiagnostic = true;
           }
         }
+
+        if (
+          !addedDiagnostic &&
+          currentSchema?.additionalProperties !== false &&
+          valuesEntries.size > 0 &&
+          !valuesEntries.has(entry.key)
+        ) {
+          const diagnostic = diagnosticForEntry(
+            entry,
+            `Chart defaults do not contain value key '${entry.key}'. This may be unsupported or a typo.`,
+          );
+          if (diagnostic) {
+            diagnostics.push(diagnostic);
+          }
+        }
+
         visitNode(entry.value, [...path, entry.key]);
       }
       return;

@@ -8,7 +8,7 @@ It resolves the `HelmRepository` referenced by each `HelmRelease`, pulls the cha
 
 - key completions inside `spec.values`
 - hover descriptions and examples
-- unknown-key diagnostics when a schema is available
+- unknown-key diagnostics from strict schemas or best-effort `values.yaml` defaults
 - per-block CodeLens actions for resolved chart details, schema, values, and Helm pull commands
 - a status bar indicator for the active HelmRelease
 
@@ -49,12 +49,14 @@ Repository lookup supports:
 
 - `fluxHelmValues.helmPath`: path to the Helm executable, default `helm`
 - `fluxHelmValues.cacheTtlHours`: successful chart cache TTL, default `24`
+- `fluxHelmValues.linting.enabled`: enable schema and `values.yaml`-backed lint warnings, default `true`
 - `fluxHelmValues.repositorySearchPaths`: extra files, folders, or glob patterns to scan for `HelmRepository` manifests after same-file, sibling, and workspace lookup fails
 
 Example:
 
 ```json
 {
+  "fluxHelmValues.linting.enabled": true,
   "fluxHelmValues.repositorySearchPaths": [
     "/Users/me/projects/**/*.yaml",
     "C:\\Users\\me\\projects\\**\\*.yaml",

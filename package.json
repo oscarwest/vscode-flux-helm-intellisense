@@ -83,6 +83,11 @@
           "minimum": 1,
           "description": "Number of hours a successfully pulled chart stays fresh in the extension cache."
         },
+        "fluxHelmValues.linting.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable schema and values.yaml-backed lint warnings for HelmRelease spec.values blocks."
+        },
         "fluxHelmValues.repositorySearchPaths": {
           "type": "array",
           "default": [],

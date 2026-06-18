@@ -90,6 +90,12 @@ function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'unknown error';
 }
 
+export function isLintingEnabled(): boolean {
+  return vscode.workspace
+    .getConfiguration('fluxHelmValues')
+    .get<boolean>('linting.enabled', true);
+}
+
 async function openDocumentAt(
   uri: vscode.Uri,
 ): Promise<vscode.TextDocument | undefined> {
@@ -145,6 +151,14 @@ class FluxHelmValuesService {
   public async refreshDiagnostics(
     document: vscode.TextDocument,
   ): Promise<void> {
+    if (!isLintingEnabled()) {
+      this.diagnostics.delete(document.uri);
+      this.output.appendLine(
+        `[diagnostics] Skipped for ${document.uri.fsPath}: linting disabled`,
+      );
+      return;
+    }
+
     const contexts = findAllValuesContexts(document);
     if (contexts.length === 0) {
       this.diagnostics.delete(document.uri);
@@ -529,6 +543,17 @@ export function activate(context: vscode.ExtensionContext): void {
         output.appendLine(
           '[repository-index] Invalidated after repositorySearchPaths change',
         );
+      }
+      if (event.affectsConfiguration('fluxHelmValues.linting.enabled')) {
+        if (!isLintingEnabled()) {
+          diagnostics.clear();
+          output.appendLine('[diagnostics] Cleared after linting disabled');
+          return;
+        }
+        const editor = vscode.window.activeTextEditor;
+        if (editor?.document.languageId === 'yaml') {
+          void service.refreshDiagnostics(editor.document);
+        }
       }
     }),
     vscode.workspace.onDidCreateFiles((event) => {

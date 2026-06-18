@@ -2,15 +2,30 @@ import * as fs from 'fs/promises';
 import { describe, expect, it } from 'vitest';
 import * as vscode from 'vscode';
 import { parseDocument } from 'yaml';
+import { findValuesContext } from '../src/flux';
 import {
   buildSchemaCompletionItems,
   buildValuesFallbackCompletionItems,
+  provideSchemaDiagnostics,
   provideSchemaHover,
   provideValuesFallbackCompletions,
   provideValuesFallbackHover,
 } from '../src/intellisense';
 import type { JsonSchema } from '../src/types';
 import { createTextDocument, positionOf } from './helpers';
+
+function valuesContextFor(document: vscode.TextDocument, key = 'values') {
+  const text = document.getText();
+  const offset = text.indexOf(key);
+  if (offset === -1) {
+    throw new Error(`Missing context key: ${key}`);
+  }
+  const context = findValuesContext(document, document.positionAt(offset));
+  if (!context) {
+    throw new Error('Missing values context');
+  }
+  return context;
+}
 
 describe('intellisense completion builders', () => {
   it('generates schema-backed completion items with snippets and docs', () => {
@@ -247,5 +262,322 @@ describe('intellisense completion builders', () => {
     );
 
     expect(hover?.contents.value).toContain('second release global settings');
+  });
+
+  it('warns for unknown keys when schema forbids additional properties', async () => {
+    const helmRelease = `apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: demo\nspec:\n  values:\n    database:\n      enabled: true\n    asdf: asdf\n`;
+    const document = createTextDocument(helmRelease) as vscode.TextDocument;
+    const tempSchemaPath = '/tmp/flux-helm-values-strict-schema.json';
+    await fs.writeFile(
+      tempSchemaPath,
+      JSON.stringify({
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          database: { type: 'object' },
+        },
+      }),
+      'utf8',
+    );
+
+    const diagnostics = await provideSchemaDiagnostics(
+      document,
+      {
+        chartDir: '/tmp/chart',
+        valuesSchemaPath: tempSchemaPath,
+        fetchedAt: Date.now(),
+      },
+      valuesContextFor(document),
+    );
+
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.message).toBe("Unknown chart value key 'asdf'.");
+    expect(diagnostics[0]?.severity).toBe(vscode.DiagnosticSeverity.Warning);
+    expect(diagnostics[0]?.range.start.line).toBe(8);
+    expect(diagnostics[0]?.range.start.character).toBe(4);
+    expect(diagnostics[0]?.range.end.character).toBe(8);
+  });
+
+  it('uses values.yaml as a best-effort fallback for unknown root keys', async () => {
+    const helmRelease = `apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: demo\nspec:\n  values:\n    database:\n      enabled: true\n    asdf: asdf\n`;
+    const document = createTextDocument(helmRelease) as vscode.TextDocument;
+    const tempValuesPath = '/tmp/flux-helm-values-lint-root-values.yaml';
+    await fs.writeFile(
+      tempValuesPath,
+      'database:\n  enabled: false\nprovisionResources: false\n',
+      'utf8',
+    );
+
+    const diagnostics = await provideSchemaDiagnostics(
+      document,
+      {
+        chartDir: '/tmp/chart',
+        valuesPath: tempValuesPath,
+        fetchedAt: Date.now(),
+      },
+      valuesContextFor(document),
+    );
+
+    expect(diagnostics.map((diagnostic) => diagnostic.message)).toEqual([
+      "Chart defaults do not contain value key 'asdf'. This may be unsupported or a typo.",
+    ]);
+  });
+
+  it('uses values.yaml as a best-effort fallback for unknown nested keys', async () => {
+    const helmRelease = `apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: demo\nspec:\n  values:\n    database:\n      enabled: true\n      typo: true\n`;
+    const document = createTextDocument(helmRelease) as vscode.TextDocument;
+    const tempValuesPath = '/tmp/flux-helm-values-lint-nested-values.yaml';
+    await fs.writeFile(
+      tempValuesPath,
+      'database:\n  enabled: false\n  host: localhost\n',
+      'utf8',
+    );
+
+    const diagnostics = await provideSchemaDiagnostics(
+      document,
+      {
+        chartDir: '/tmp/chart',
+        valuesPath: tempValuesPath,
+        fetchedAt: Date.now(),
+      },
+      valuesContextFor(document),
+    );
+
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.message).toContain("value key 'typo'");
+    expect(diagnostics[0]?.range.start.line).toBe(8);
+    expect(diagnostics[0]?.range.start.character).toBe(6);
+  });
+
+  it('lets strict schema diagnostics win over values.yaml fallback diagnostics', async () => {
+    const helmRelease = `apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: demo\nspec:\n  values:\n    asdf: asdf\n`;
+    const document = createTextDocument(helmRelease) as vscode.TextDocument;
+    const tempSchemaPath = '/tmp/flux-helm-values-lint-strict-wins-schema.json';
+    const tempValuesPath = '/tmp/flux-helm-values-lint-strict-wins-values.yaml';
+    await fs.writeFile(
+      tempSchemaPath,
+      JSON.stringify({
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          database: { type: 'object' },
+        },
+      }),
+      'utf8',
+    );
+    await fs.writeFile(tempValuesPath, 'database: {}\n', 'utf8');
+
+    const diagnostics = await provideSchemaDiagnostics(
+      document,
+      {
+        chartDir: '/tmp/chart',
+        valuesSchemaPath: tempSchemaPath,
+        valuesPath: tempValuesPath,
+        fetchedAt: Date.now(),
+      },
+      valuesContextFor(document),
+    );
+
+    expect(diagnostics.map((diagnostic) => diagnostic.message)).toEqual([
+      "Unknown chart value key 'asdf'.",
+    ]);
+  });
+
+  it('falls back to values.yaml when schema is permissive', async () => {
+    const helmRelease = `apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: demo\nspec:\n  values:\n    asdf: asdf\n`;
+    const document = createTextDocument(helmRelease) as vscode.TextDocument;
+    const tempSchemaPath = '/tmp/flux-helm-values-lint-permissive-schema.json';
+    const tempValuesPath = '/tmp/flux-helm-values-lint-permissive-values.yaml';
+    await fs.writeFile(
+      tempSchemaPath,
+      JSON.stringify({
+        type: 'object',
+        properties: {
+          database: { type: 'object' },
+        },
+      }),
+      'utf8',
+    );
+    await fs.writeFile(tempValuesPath, 'dynamic: true\n', 'utf8');
+
+    const diagnostics = await provideSchemaDiagnostics(
+      document,
+      {
+        chartDir: '/tmp/chart',
+        valuesSchemaPath: tempSchemaPath,
+        valuesPath: tempValuesPath,
+        fetchedAt: Date.now(),
+      },
+      valuesContextFor(document),
+    );
+
+    expect(diagnostics.map((diagnostic) => diagnostic.message)).toEqual([
+      "Chart defaults do not contain value key 'asdf'. This may be unsupported or a typo.",
+    ]);
+  });
+
+  it('does not warn when neither schema nor matching defaults can evaluate a path', async () => {
+    const helmRelease = `apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: demo\nspec:\n  values:\n    dynamic:\n      asdf: asdf\n`;
+    const document = createTextDocument(helmRelease) as vscode.TextDocument;
+    const tempValuesPath = '/tmp/flux-helm-values-lint-no-node-values.yaml';
+    await fs.writeFile(tempValuesPath, 'dynamic: true\n', 'utf8');
+
+    const diagnostics = await provideSchemaDiagnostics(
+      document,
+      {
+        chartDir: '/tmp/chart',
+        valuesPath: tempValuesPath,
+        fetchedAt: Date.now(),
+      },
+      valuesContextFor(document),
+    );
+
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('keeps diagnostics scoped to the selected HelmRelease document', async () => {
+    const helmRelease = `apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: first\nspec:\n  values:\n    asdf: first\n---\napiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: second\nspec:\n  values:\n    asdf: second\n`;
+    const { document, position } = positionOf(helmRelease, 'asdf: second');
+    const typedDocument = document as vscode.TextDocument;
+    const tempValuesPath = '/tmp/flux-helm-values-lint-multidoc-values.yaml';
+    await fs.writeFile(tempValuesPath, 'database: {}\n', 'utf8');
+    const context = findValuesContext(typedDocument, position);
+    if (!context) {
+      throw new Error('Missing second document values context');
+    }
+
+    const diagnostics = await provideSchemaDiagnostics(
+      typedDocument,
+      {
+        chartDir: '/tmp/chart',
+        valuesPath: tempValuesPath,
+        fetchedAt: Date.now(),
+      },
+      context,
+    );
+
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.message).toContain("value key 'asdf'");
+    expect(diagnostics[0]?.range.start.line).toBe(14);
+  });
+
+  it('does not warn for known empty object or array values', async () => {
+    const helmRelease = `apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: demo\nspec:\n  values:\n    resources: {}\n    tolerations: []\n`;
+    const document = createTextDocument(helmRelease) as vscode.TextDocument;
+    const tempValuesPath = '/tmp/flux-helm-values-lint-empty-values.yaml';
+    await fs.writeFile(
+      tempValuesPath,
+      'resources:\n  limits:\n    cpu: 100m\ntolerations:\n  - key: dedicated\n',
+      'utf8',
+    );
+
+    const diagnostics = await provideSchemaDiagnostics(
+      document,
+      {
+        chartDir: '/tmp/chart',
+        valuesPath: tempValuesPath,
+        fetchedAt: Date.now(),
+      },
+      valuesContextFor(document),
+    );
+
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('does not warn for nested keys under null defaults because the path cannot be evaluated', async () => {
+    const helmRelease = `apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: demo\nspec:\n  values:\n    resources:\n      limits:\n        cpu: 100m\n`;
+    const document = createTextDocument(helmRelease) as vscode.TextDocument;
+    const tempValuesPath =
+      '/tmp/flux-helm-values-lint-null-default-values.yaml';
+    await fs.writeFile(tempValuesPath, 'resources:\n', 'utf8');
+
+    const diagnostics = await provideSchemaDiagnostics(
+      document,
+      {
+        chartDir: '/tmp/chart',
+        valuesPath: tempValuesPath,
+        fetchedAt: Date.now(),
+      },
+      valuesContextFor(document),
+    );
+
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('matches quoted keys against values.yaml defaults', async () => {
+    const helmRelease = `apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: demo\nspec:\n  values:\n    "service.annotations": {}\n    "bad.annotation": true\n`;
+    const document = createTextDocument(helmRelease) as vscode.TextDocument;
+    const tempValuesPath = '/tmp/flux-helm-values-lint-quoted-values.yaml';
+    await fs.writeFile(tempValuesPath, '"service.annotations": {}\n', 'utf8');
+
+    const diagnostics = await provideSchemaDiagnostics(
+      document,
+      {
+        chartDir: '/tmp/chart',
+        valuesPath: tempValuesPath,
+        fetchedAt: Date.now(),
+      },
+      valuesContextFor(document),
+    );
+
+    expect(diagnostics.map((diagnostic) => diagnostic.message)).toEqual([
+      "Chart defaults do not contain value key 'bad.annotation'. This may be unsupported or a typo.",
+    ]);
+  });
+
+  it('uses values.yaml array item shape for fallback linting across all indexes', async () => {
+    const helmRelease = `apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: demo\nspec:\n  values:\n    extraEnv:\n      - name: FIRST\n        value: one\n      - name: SECOND\n        typo: two\n`;
+    const document = createTextDocument(helmRelease) as vscode.TextDocument;
+    const tempValuesPath = '/tmp/flux-helm-values-lint-array-values.yaml';
+    await fs.writeFile(
+      tempValuesPath,
+      'extraEnv:\n  - name: EXAMPLE\n    value: example\n',
+      'utf8',
+    );
+
+    const diagnostics = await provideSchemaDiagnostics(
+      document,
+      {
+        chartDir: '/tmp/chart',
+        valuesPath: tempValuesPath,
+        fetchedAt: Date.now(),
+      },
+      valuesContextFor(document),
+    );
+
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.message).toContain("value key 'typo'");
+  });
+
+  it('does not warn for dynamic schema maps using additionalProperties schemas', async () => {
+    const helmRelease = `apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: demo\nspec:\n  values:\n    labels:\n      app.kubernetes.io/name: demo\n`;
+    const document = createTextDocument(helmRelease) as vscode.TextDocument;
+    const tempSchemaPath = '/tmp/flux-helm-values-lint-dynamic-map-schema.json';
+    await fs.writeFile(
+      tempSchemaPath,
+      JSON.stringify({
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          labels: {
+            type: 'object',
+            additionalProperties: { type: 'string' },
+          },
+        },
+      }),
+      'utf8',
+    );
+
+    const diagnostics = await provideSchemaDiagnostics(
+      document,
+      {
+        chartDir: '/tmp/chart',
+        valuesSchemaPath: tempSchemaPath,
+        fetchedAt: Date.now(),
+      },
+      valuesContextFor(document),
+    );
+
+    expect(diagnostics).toEqual([]);
   });
 });
