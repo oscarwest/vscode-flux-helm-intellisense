@@ -1,7 +1,7 @@
 import * as fs from 'fs/promises';
 import * as vscode from 'vscode';
-import { parseDocument, isMap, isSeq, isScalar, stringify } from 'yaml';
 import type { Document, Node, Pair } from 'yaml';
+import { isMap, isScalar, isSeq, parseDocument, stringify } from 'yaml';
 import {
   describeNodeValue,
   findValuesContext,
@@ -165,12 +165,12 @@ function yamlSnippetForValue(value: unknown): string {
 
 function snippetScalarValue(value: unknown): string {
   if (typeof value === 'string') {
-    return value === '' ? '\${1}' : value;
+    return value === '' ? '${1}' : value;
   }
   if (typeof value === 'number' || typeof value === 'boolean') {
     return String(value);
   }
-  return '\${1}';
+  return '${1}';
 }
 
 function documentationForSchema(
@@ -519,23 +519,14 @@ export async function provideSchemaDiagnostics(
       return;
     }
     if (isSeq(node)) {
-      node.items.forEach((item, index) =>
-        visitNode(item as Node | undefined, [...path, String(index)]),
-      );
+      node.items.forEach((item, index) => {
+        visitNode(item as Node | undefined, [...path, String(index)]);
+      });
     }
   };
 
   visitNode(context.valuesNode, []);
   return diagnostics;
-}
-
-function commentForKey(line: string): string | undefined {
-  const hashIndex = line.indexOf('#');
-  if (hashIndex === -1) {
-    return undefined;
-  }
-  const comment = line.slice(hashIndex + 1).trim();
-  return comment || undefined;
 }
 
 export async function provideValuesFallbackCompletions(

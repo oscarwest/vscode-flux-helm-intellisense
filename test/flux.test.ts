@@ -1,7 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import * as vscode from 'vscode';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as vscode from 'vscode';
 import {
   findAllValuesContexts,
   findValuesContext,

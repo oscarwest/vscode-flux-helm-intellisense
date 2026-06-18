@@ -2,6 +2,8 @@
 
 Flux Helm IntelliSense is a VS Code extension that provides Helm values IntelliSense inside Flux `HelmRelease.spec.values` blocks.
 
+![Flux Helm IntelliSense completions and hover documentation](./assets/intellisense.jpg)
+
 It resolves the `HelmRepository` referenced by each `HelmRelease`, pulls the chart locally with `helm`, and reads either `values.schema.json` or `values.yaml` to provide:
 
 - key completions inside `spec.values`

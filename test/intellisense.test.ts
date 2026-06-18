@@ -1,11 +1,11 @@
-import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
-import { parseDocument } from 'yaml';
 import { describe, expect, it } from 'vitest';
+import * as vscode from 'vscode';
+import { parseDocument } from 'yaml';
 import {
   buildSchemaCompletionItems,
-  provideSchemaHover,
   buildValuesFallbackCompletionItems,
+  provideSchemaHover,
   provideValuesFallbackCompletions,
   provideValuesFallbackHover,
 } from '../src/intellisense';

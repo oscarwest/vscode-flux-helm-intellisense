@@ -8,8 +8,8 @@ module.exports = {
       '@semantic-release/exec',
       {
         prepareCmd:
-          'npm version ${nextRelease.version} --no-git-tag-version --allow-same-version && npm run compile && npx vsce package --out vscode-flux-helm-intellisense-${nextRelease.version}.vsix'
-      }
+          'npm version ${nextRelease.version} --no-git-tag-version --allow-same-version && npm run compile && npx vsce package --out vscode-flux-helm-intellisense-${nextRelease.version}.vsix',
+      },
     ],
     [
       '@semantic-release/github',
@@ -17,17 +17,18 @@ module.exports = {
         assets: [
           {
             path: 'vscode-flux-helm-intellisense-*.vsix',
-            label: 'VSIX package'
-          }
-        ]
-      }
+            label: 'VSIX package',
+          },
+        ],
+      },
     ],
     [
       '@semantic-release/git',
       {
         assets: ['package.json', 'package-lock.json', 'CHANGELOG.md'],
-        message: 'chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}'
-      }
-    ]
-  ]
+        message:
+          'chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}',
+      },
+    ],
+  ],
 };

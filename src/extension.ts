@@ -109,7 +109,6 @@ class FluxHelmValuesService {
   private hasWarnedAboutHelm = false;
 
   public constructor(
-    private readonly context: vscode.ExtensionContext,
     private readonly diagnostics: vscode.DiagnosticCollection,
     private readonly chartCache: ChartCache,
     private readonly output: vscode.OutputChannel,
@@ -259,17 +258,12 @@ export function activate(context: vscode.ExtensionContext): void {
   const diagnostics =
     vscode.languages.createDiagnosticCollection('fluxHelmValues');
   const chartCache = new ChartCache(context);
-  const service = new FluxHelmValuesService(
-    context,
-    diagnostics,
-    chartCache,
-    output,
-  );
+  const service = new FluxHelmValuesService(diagnostics, chartCache, output);
   let statusRequestId = 0;
 
   const updateStatusBar = async (editor?: vscode.TextEditor): Promise<void> => {
     const currentRequestId = ++statusRequestId;
-    if (!editor || editor.document.languageId !== 'yaml') {
+    if (editor?.document.languageId !== 'yaml') {
       statusBar.hide();
       return;
     }

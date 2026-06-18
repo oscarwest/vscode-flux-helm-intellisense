@@ -4,7 +4,15 @@
   "description": "Helm values IntelliSense for Flux HelmRelease spec.values blocks.",
   "version": "1.0.0",
   "publisher": "oscarwest",
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oscarwest/vscode-flux-helm-intellisense.git"
+  },
+  "bugs": {
+    "url": "https://github.com/oscarwest/vscode-flux-helm-intellisense/issues"
+  },
+  "homepage": "https://github.com/oscarwest/vscode-flux-helm-intellisense#readme",
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -21,6 +29,10 @@
     "Programming Languages",
     "Other"
   ],
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
   "activationEvents": [
     "onLanguage:yaml"
   ],
@@ -68,6 +80,9 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
+    "check": "biome check .",
+    "check:write": "biome check --write .",
+    "format": "biome format --write .",
     "watch": "tsc -watch -p ./",
     "test": "vitest run",
     "package:vsix": "vsce package",
@@ -77,6 +92,7 @@
     "yaml": "^2.8.1"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.0",
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/commit-analyzer": "^13.0.1",
     "@semantic-release/exec": "^7.1.0",

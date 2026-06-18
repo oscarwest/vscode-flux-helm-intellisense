@@ -12,6 +12,7 @@ node_modules/**/*.map
 out/**/*.map
 MANUAL_SMOKE_TEST.md
 PUBLISHING.md
+biome.json
 release.config.cjs
 tsconfig.json
 vitest.config.ts

@@ -1,9 +1,9 @@
+import { execFile } from 'child_process';
 import * as crypto from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import * as vscode from 'vscode';
-import { execFile } from 'child_process';
 import { promisify } from 'util';
+import * as vscode from 'vscode';
 import type { ChartLoadFailure, ChartMetadata, ResolvedChart } from './types';
 
 const execFileAsync = promisify(execFile);
@@ -198,7 +198,7 @@ export class ChartCache {
   private readonly inFlightLoads = new Map<string, Promise<ChartMetadata>>();
 
   public constructor(
-    private readonly context: vscode.ExtensionContext,
+    context: vscode.ExtensionContext,
     dependencies: ChartCacheDependencies = {},
   ) {
     this.storageDir = context.globalStorageUri.fsPath;

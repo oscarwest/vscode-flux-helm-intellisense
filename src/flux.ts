@@ -1,16 +1,15 @@
-import * as vscode from 'vscode';
 import * as path from 'path';
-import {
-  LineCounter,
-  YAMLMap,
-  YAMLSeq,
-  Scalar,
-  isMap,
-  isSeq,
-  isScalar,
-  parseAllDocuments,
-} from 'yaml';
+import * as vscode from 'vscode';
 import type { Document, Node, Pair } from 'yaml';
+import {
+  isMap,
+  isScalar,
+  isSeq,
+  LineCounter,
+  parseAllDocuments,
+  type Scalar,
+  type YAMLMap,
+} from 'yaml';
 import type {
   HelmReleaseResource,
   HelmRepositoryResource,
@@ -454,7 +453,6 @@ export async function resolveChartForDocument(
     return undefined;
   }
 
-  const chartSpec = targetRelease.spec.chart?.spec;
   const sameFileRepos = getHelmRepositories(parsed);
   const siblingRepos = await loadSiblingRepositories(document.uri);
   const workspaceRepos = await loadWorkspaceRepositories(document.uri);
