@@ -3,7 +3,7 @@
   "displayName": "Flux Helm IntelliSense",
   "description": "Helm values IntelliSense for Flux HelmRelease spec.values blocks.",
   "version": "1.0.0",
-  "publisher": "oscarwest",
+  "publisher": "westtechnologyconsultingab",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -85,24 +85,16 @@
     "format": "biome format --write .",
     "watch": "tsc -watch -p ./",
     "test": "vitest run",
-    "package:vsix": "vsce package",
-    "release": "semantic-release"
+    "package:vsix": "vsce package"
   },
   "dependencies": {
     "yaml": "^2.8.1"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.0",
-    "@semantic-release/changelog": "^6.0.3",
-    "@semantic-release/commit-analyzer": "^13.0.1",
-    "@semantic-release/exec": "^7.1.0",
-    "@semantic-release/git": "^10.0.1",
-    "@semantic-release/github": "^11.0.6",
-    "@semantic-release/release-notes-generator": "^14.1.0",
     "@types/node": "^22.15.30",
     "@types/vscode": "^1.90.0",
     "@vscode/vsce": "^3.6.2",
-    "semantic-release": "^24.2.9",
     "typescript": "^5.8.3",
     "vitest": "^4.1.9"
   }

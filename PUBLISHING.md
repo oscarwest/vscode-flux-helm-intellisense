@@ -28,31 +28,13 @@ npm install --save-dev @vscode/vsce
 
 You can also install it globally if preferred.
 
-## CI And Release Automation
+## CI
 
 This repository includes:
 
 - `.github/workflows/pr-tests.yml` for pull request validation
-- `.github/workflows/release.yml` for manual GitHub releases from `main`
-- `release.config.cjs` for semantic-release
 
-The release workflow:
-
-1. runs on `workflow_dispatch`
-2. only executes on the `main` branch
-3. runs install, compile, and tests
-4. uses semantic-release to determine the next version from commit messages
-5. updates `CHANGELOG.md`
-6. creates a GitHub release
-7. uploads a packaged `.vsix` asset
-
-The GitHub release workflow does not publish to the VS Code Marketplace. Publish Marketplace releases locally with `vsce publish` after validating the package.
-
-Use conventional commits for reliable versioning, for example:
-
-- `feat: add schema-backed hover docs`
-- `fix: resolve sibling HelmRepository files`
-- `chore: update release workflow`
+Marketplace publishing is intentionally local for now.
 
 ## Package The Extension
 
@@ -68,35 +50,31 @@ That produces a `.vsix` file you can install locally or upload.
 
 For Marketplace releases, publish locally from a clean checkout after validating the package.
 
-Log in once with a Marketplace token for the `oscarwest` publisher:
+Log in once with a Marketplace token for the `westtechnologyconsultingab` publisher:
 
 ```bash
-npx vsce login oscarwest
+npx vsce login westtechnologyconsultingab
 ```
 
-To let semantic-release choose and write the version first, run the release locally:
+For a new release, update the version in `package.json` and `package-lock.json` without creating an npm tag:
 
 ```bash
-npm run release
+npm version <version> --no-git-tag-version
 ```
 
-Local semantic-release needs a GitHub token with permission to create releases for this repository. You can export one from the GitHub CLI session before running the release:
+Then package and publish that exact version:
 
 ```bash
-export GITHUB_TOKEN="$(gh auth token)"
-```
-
-This updates `package.json` and `package-lock.json`, writes `CHANGELOG.md`, creates the GitHub release, and packages a versioned VSIX such as `vscode-flux-helm-intellisense-1.0.0.vsix`.
-
-Then publish that exact VSIX to the Marketplace:
-
-```bash
+npm run package:vsix
 npx vsce publish --packagePath vscode-flux-helm-intellisense-<version>.vsix
 ```
 
-Replace `<version>` with the version semantic-release printed and wrote to `package.json`.
+If you want a matching GitHub tag after publishing, create it explicitly:
 
-If you intentionally want to publish the already checked-in `package.json` version without running semantic-release, use `npx vsce publish`.
+```bash
+git tag v<version>
+git push origin main v<version>
+```
 
 ## Marketplace Page Assets
 
@@ -133,12 +111,12 @@ Before a real public release, consider adding or reviewing:
 
 ## Suggested Release Checklist
 
-- verify conventional commits are ready for semantic-release
+- verify `package.json` version
 - run `npm install`
 - run `npm run check`
 - run `npm run compile`
 - run `npm test`
 - test in Extension Development Host
-- run `npm run release`
+- package with `npm run package:vsix`
 - install the generated `.vsix` locally
 - publish locally with `npx vsce publish --packagePath vscode-flux-helm-intellisense-<version>.vsix`
