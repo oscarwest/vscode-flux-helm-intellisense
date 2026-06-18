@@ -2,7 +2,7 @@
   "name": "vscode-flux-helm-intellisense",
   "displayName": "Flux Helm IntelliSense",
   "description": "Helm values IntelliSense for Flux HelmRelease spec.values blocks.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "publisher": "westtechnologyconsultingab",
   "license": "MIT",
   "repository": {

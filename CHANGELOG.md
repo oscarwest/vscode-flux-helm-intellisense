@@ -1,3 +1,9 @@
+## [1.2.0](https://github.com/oscarwest/vscode-flux-helm-intellisense/compare/v1.1.0...v1.2.0) (2026-06-18)
+
+### Features
+
+* add values-backed linting ([fba1469](https://github.com/oscarwest/vscode-flux-helm-intellisense/commit/fba1469e86c8786c530d1a10b3b525bf7247448e))
+
 ## [1.1.0](https://github.com/oscarwest/vscode-flux-helm-intellisense/compare/v1.0.0...v1.1.0) (2026-06-18)
 
 ### Features
