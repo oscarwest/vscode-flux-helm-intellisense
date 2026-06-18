@@ -1,5 +1,6 @@
 module.exports = {
   branches: ['main'],
+  repositoryUrl: 'git@github.com:oscarwest/vscode-flux-helm-intellisense.git',
   tagFormat: 'v${version}',
   plugins: [
     [
