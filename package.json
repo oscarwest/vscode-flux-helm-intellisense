@@ -102,16 +102,24 @@
     "format": "biome format --write .",
     "watch": "tsc -watch -p ./",
     "test": "vitest run",
-    "package:vsix": "vsce package"
+    "package:vsix": "vsce package",
+    "release": "semantic-release"
   },
   "dependencies": {
     "yaml": "^2.8.1"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.0",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/commit-analyzer": "^13.0.1",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/npm": "^13.1.5",
+    "@semantic-release/release-notes-generator": "^14.1.1",
     "@types/node": "^22.15.30",
     "@types/vscode": "^1.90.0",
     "@vscode/vsce": "^3.6.2",
+    "conventional-changelog-conventionalcommits": "^9.3.1",
+    "semantic-release": "^25.0.5",
     "typescript": "^5.8.3",
     "vitest": "^4.1.9"
   }
