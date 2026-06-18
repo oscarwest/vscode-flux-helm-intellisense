@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+*.vsix
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS files
+.DS_Store
+
+# Editor state
+.vscode/*.code-workspace
+.vscode/settings.json
+.vscode/*.log
+
+# Test artifacts
+coverage/
+.vitest/
+
+# Local temp files
+*.tmp
+*.temp

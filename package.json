@@ -1,0 +1,93 @@
+{
+  "name": "vscode-flux-helm-intellisense",
+  "displayName": "Flux Helm IntelliSense",
+  "description": "Helm values IntelliSense for Flux HelmRelease spec.values blocks.",
+  "version": "1.0.0",
+  "publisher": "oscarwest",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "keywords": [
+    "flux",
+    "helm",
+    "helmrelease",
+    "kubernetes",
+    "yaml",
+    "intellisense",
+    "values"
+  ],
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:yaml"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "fluxHelmValues.refreshChartCache",
+        "title": "Flux Helm IntelliSense: Refresh Chart Cache"
+      },
+      {
+        "command": "fluxHelmValues.clearChartCache",
+        "title": "Flux Helm IntelliSense: Clear Chart Cache"
+      },
+      {
+        "command": "fluxHelmValues.showResolvedChart",
+        "title": "Flux Helm IntelliSense: Show Resolved Chart"
+      },
+      {
+        "command": "fluxHelmValues.showLogs",
+        "title": "Flux Helm IntelliSense: Show Logs"
+      },
+      {
+        "command": "fluxHelmValues.checkHelmSetup",
+        "title": "Flux Helm IntelliSense: Check Helm Setup"
+      }
+    ],
+    "configuration": {
+      "title": "Flux Helm IntelliSense",
+      "properties": {
+        "fluxHelmValues.helmPath": {
+          "type": "string",
+          "default": "helm",
+          "description": "Path to the Helm executable used to pull chart metadata."
+        },
+        "fluxHelmValues.cacheTtlHours": {
+          "type": "number",
+          "default": 24,
+          "minimum": 1,
+          "description": "Number of hours a successfully pulled chart stays fresh in the extension cache."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "vitest run",
+    "package:vsix": "vsce package",
+    "release": "semantic-release"
+  },
+  "dependencies": {
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/commit-analyzer": "^13.0.1",
+    "@semantic-release/exec": "^7.1.0",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^11.0.6",
+    "@semantic-release/release-notes-generator": "^14.1.0",
+    "@types/node": "^22.15.30",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.6.2",
+    "semantic-release": "^24.2.9",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.9"
+  }
+}
