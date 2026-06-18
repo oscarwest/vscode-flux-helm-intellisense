@@ -34,6 +34,7 @@ Repository lookup supports:
 - same-file `HelmRepository` resources
 - sibling YAML files in the same directory
 - full workspace lookup when needed
+- configured extra repository search paths for local repos outside the current workspace
 - namespace-less `HelmRepository` manifests that rely on external namespace injection
 
 ## Commands
@@ -41,12 +42,43 @@ Repository lookup supports:
 - `Flux Helm IntelliSense: Refresh Chart Cache`
 - `Flux Helm IntelliSense: Clear Chart Cache`
 - `Flux Helm IntelliSense: Show Resolved Chart`
+- `Flux Helm IntelliSense: Copy Helm Pull Command`
 - `Flux Helm IntelliSense: Show Logs`
 
 ## Settings
 
 - `fluxHelmValues.helmPath`: path to the Helm executable, default `helm`
 - `fluxHelmValues.cacheTtlHours`: successful chart cache TTL, default `24`
+- `fluxHelmValues.repositorySearchPaths`: extra files, folders, or glob patterns to scan for `HelmRepository` manifests after same-file, sibling, and workspace lookup fails
+
+Example:
+
+```json
+{
+  "fluxHelmValues.repositorySearchPaths": [
+    "/Users/oscarwest/projects/vce/platform/**/*.yaml",
+    "../shared-flux-sources"
+  ]
+}
+```
+
+## Private OCI Registries
+
+Flux Helm IntelliSense uses your configured `helm` executable and does not store registry credentials. For private OCI registries, authenticate Helm first:
+
+```bash
+helm registry login <registry-host>
+```
+
+For Azure Container Registry, you can also use:
+
+```bash
+az acr login --name <registry-name>
+```
+
+If `helm pull` fails, the extension output includes the Helm exit code, signal when available, stderr, stdout, and an OCI registry login hint for authorization failures.
+
+Use `Flux Helm IntelliSense: Copy Helm Pull Command` or the `Copy helm pull` CodeLens above a `values:` block to copy the exact `helm pull` command the extension uses. Running that command in a terminal is the fastest way to debug registry authentication and verify that `helm registry login` or `az acr login` fixed access.
 
 ## Development
 

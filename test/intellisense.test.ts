@@ -162,6 +162,37 @@ describe('intellisense completion builders', () => {
     expect(items.map((item) => item.label)).toContain('spegel');
   });
 
+  it('offers child completions on the first blank line under an empty map key', async () => {
+    const helmRelease = `apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: demo\n  namespace: apps\nspec:\n  chart:\n    spec:\n      chart: demo\n      sourceRef:\n        kind: HelmRepository\n        name: repo\n  values:\n    image:\n      \n    serviceIdentity:\n      team: platform\n`;
+    const document = createTextDocument(helmRelease);
+    const position = new vscode.Position(14, 6);
+
+    const tempValuesPath =
+      '/tmp/flux-helm-values-first-child-blankline-values.yaml';
+    await fs.writeFile(
+      tempValuesPath,
+      'affinity: {}\nimage:\n  repository: nginx\n  tag: latest\n  pullPolicy: IfNotPresent\nserviceIdentity:\n  team: platform\n',
+      'utf8',
+    );
+
+    const items = await provideValuesFallbackCompletions(
+      document as vscode.TextDocument,
+      position,
+      {
+        chartDir: '/tmp/chart',
+        valuesPath: tempValuesPath,
+        fetchedAt: Date.now(),
+      },
+    );
+    const labels = items.map((item) => item.label);
+
+    expect(labels).toContain('repository');
+    expect(labels).toContain('tag');
+    expect(labels).toContain('pullPolicy');
+    expect(labels).not.toContain('affinity');
+    expect(labels).not.toContain('serviceIdentity');
+  });
+
   it('resolves fallback hovers against the correct HelmRelease in a multi-document file', async () => {
     const helmRelease = `apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: first\n  namespace: apps\nspec:\n  chart:\n    spec:\n      chart: first\n      sourceRef:\n        kind: HelmRepository\n        name: repo\n  values:\n    replicaCount: 1\n---\napiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: second\n  namespace: apps\nspec:\n  chart:\n    spec:\n      chart: second\n      sourceRef:\n        kind: HelmRepository\n        name: repo\n  values:\n    serviceMonitor:\n      enabled: true\n`;
     const { document, position } = positionOf(helmRelease, 'serviceMonitor');

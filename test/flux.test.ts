@@ -1,4 +1,5 @@
 import * as fs from 'fs/promises';
+import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
@@ -7,6 +8,7 @@ import {
   findValuesContext,
   getHelmReleases,
   getHelmRepositories,
+  invalidateWorkspaceRepositoryCache,
   parseYamlDocuments,
   resolveChartForDocument,
   resolveChartFromResources,
@@ -19,9 +21,16 @@ const fixtureRoot = path.join(
   'fixtures',
   'infrastructure',
 );
+const tempDirs: string[] = [];
 
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks();
+  invalidateWorkspaceRepositoryCache();
+  await Promise.all(
+    tempDirs
+      .splice(0)
+      .map((dir) => fs.rm(dir, { recursive: true, force: true })),
+  );
 });
 
 describe('flux parsing and resolution', () => {
@@ -168,6 +177,86 @@ describe('flux parsing and resolution', () => {
       'https://prometheus-community.github.io/helm-charts',
     );
     expect(resolved?.chart).toBe('kube-prometheus-stack');
+  });
+
+  it('resolves HelmRepository from a configured external search path as the final fallback', async () => {
+    const tempDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'flux-helm-repos-'),
+    );
+    tempDirs.push(tempDir);
+    const repoPath = path.join(tempDir, 'repositories.yaml');
+    await fs.writeFile(
+      repoPath,
+      `apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmRepository\nmetadata:\n  name: external\n  namespace: apps\nspec:\n  url: https://charts.external.example.com\n`,
+      'utf8',
+    );
+    const releaseText = `apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: external-app\n  namespace: apps\nspec:\n  chart:\n    spec:\n      chart: external-chart\n      sourceRef:\n        kind: HelmRepository\n        name: external\n  values:\n    enabled: true\n`;
+    const document = createTextDocument(releaseText, '/workspace/release.yaml');
+
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValue([]);
+    vi.mocked(vscode.workspace.fs.readFile).mockRejectedValue(
+      new Error('outside workspace'),
+    );
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: <T>(key: string, defaultValue: T) =>
+        key === 'repositorySearchPaths' ? ([repoPath] as T) : defaultValue,
+    });
+
+    const resolved = await resolveChartForDocument(
+      document as vscode.TextDocument,
+      new vscode.Position(13, 8),
+    );
+
+    expect(resolved?.repoUrl).toBe('https://charts.external.example.com');
+    expect(resolved?.chart).toBe('external-chart');
+  });
+
+  it('uses workspace HelmRepository before configured external search paths', async () => {
+    const tempDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'flux-helm-repos-'),
+    );
+    tempDirs.push(tempDir);
+    const externalRepoPath = path.join(tempDir, 'repositories.yaml');
+    const workspaceRepoPath = '/workspace/repositories.yaml';
+    const workspaceRepoText = `apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmRepository\nmetadata:\n  name: shared\n  namespace: apps\nspec:\n  url: https://charts.workspace.example.com\n`;
+    await fs.writeFile(
+      externalRepoPath,
+      `apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmRepository\nmetadata:\n  name: shared\n  namespace: apps\nspec:\n  url: https://charts.external.example.com\n`,
+      'utf8',
+    );
+    const releaseText = `apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: shared-app\n  namespace: apps\nspec:\n  chart:\n    spec:\n      chart: shared-chart\n      sourceRef:\n        kind: HelmRepository\n        name: shared\n  values:\n    enabled: true\n`;
+    const document = createTextDocument(releaseText, '/workspace/release.yaml');
+
+    vi.mocked(vscode.workspace.findFiles).mockImplementation(
+      async (pattern) => {
+        const normalized =
+          typeof pattern === 'string' ? pattern : pattern.pattern;
+        return normalized === '**/*.yaml'
+          ? [vscode.Uri.file(workspaceRepoPath)]
+          : [];
+      },
+    );
+    vi.mocked(vscode.workspace.fs.readFile).mockImplementation(
+      async (uri: { fsPath: string }) => {
+        if (uri.fsPath === workspaceRepoPath) {
+          return Buffer.from(workspaceRepoText, 'utf8');
+        }
+        throw new Error('outside workspace');
+      },
+    );
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: <T>(key: string, defaultValue: T) =>
+        key === 'repositorySearchPaths'
+          ? ([externalRepoPath] as T)
+          : defaultValue,
+    });
+
+    const resolved = await resolveChartForDocument(
+      document as vscode.TextDocument,
+      new vscode.Position(13, 8),
+    );
+
+    expect(resolved?.repoUrl).toBe('https://charts.workspace.example.com');
   });
 
   it('falls back to a namespace-less HelmRepository when the release namespace is implicit elsewhere', () => {

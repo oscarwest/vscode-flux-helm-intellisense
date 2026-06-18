@@ -57,6 +57,10 @@
         "title": "Flux Helm IntelliSense: Show Resolved Chart"
       },
       {
+        "command": "fluxHelmValues.copyHelmCommand",
+        "title": "Flux Helm IntelliSense: Copy Helm Pull Command"
+      },
+      {
         "command": "fluxHelmValues.showLogs",
         "title": "Flux Helm IntelliSense: Show Logs"
       },
@@ -78,6 +82,14 @@
           "default": 24,
           "minimum": 1,
           "description": "Number of hours a successfully pulled chart stays fresh in the extension cache."
+        },
+        "fluxHelmValues.repositorySearchPaths": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional files, directories, or glob patterns to scan for Flux HelmRepository manifests after same-file, sibling, and workspace lookup fails."
         }
       }
     }

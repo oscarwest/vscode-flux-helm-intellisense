@@ -27,6 +27,13 @@ interface CacheEntry {
   failure?: ChartLoadFailure;
 }
 
+interface HelmProcessError extends Error {
+  code?: string | number;
+  signal?: string;
+  stdout?: string | Buffer;
+  stderr?: string | Buffer;
+}
+
 function shellQuotePosix(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -35,7 +42,30 @@ function shellQuotePowerShell(value: string): string {
   return `'${value.replace(/'/g, `''`)}'`;
 }
 
-function formatHelmError(error: unknown, helmPath: string): Error {
+function formatCommandOutput(value: unknown): string | undefined {
+  const output = `${value ?? ''}`.trim();
+  return output.length > 0 ? output : undefined;
+}
+
+function looksLikeAuthFailure(message: string): boolean {
+  return /\b(401|403|unauthorized|forbidden|denied|authentication required|no basic auth credentials)\b/i.test(
+    message,
+  );
+}
+
+function ociRegistryHost(repoUrl: string): string | undefined {
+  if (!repoUrl.startsWith('oci://')) {
+    return undefined;
+  }
+  return repoUrl.replace(/^oci:\/\//, '').split('/')[0];
+}
+
+export function formatHelmError(
+  error: unknown,
+  helmPath: string,
+  resolvedChart?: ResolvedChart,
+  invocation?: HelmPullInvocation,
+): Error {
   if (
     typeof error === 'object' &&
     error !== null &&
@@ -46,8 +76,42 @@ function formatHelmError(error: unknown, helmPath: string): Error {
       `Helm executable not found at '${helmPath}'. Install Helm or set fluxHelmValues.helmPath to the correct executable path.`,
     );
   }
+
   if (error instanceof Error) {
-    return error;
+    const helmError = error as HelmProcessError;
+    const parts = [`Helm command failed using '${helmPath}'.`];
+    if (invocation) {
+      parts.push(`Command: ${formatHelmInvocationForShell(invocation)}`);
+    }
+    if (helmError.code !== undefined) {
+      parts.push(`Exit code: ${helmError.code}.`);
+    }
+    if (helmError.signal) {
+      parts.push(`Signal: ${helmError.signal}.`);
+    }
+    const stderr = formatCommandOutput(helmError.stderr);
+    const stdout = formatCommandOutput(helmError.stdout);
+    if (stderr) {
+      parts.push(`stderr: ${stderr}`);
+    }
+    if (stdout) {
+      parts.push(`stdout: ${stdout}`);
+    }
+    if (!stderr && !stdout && error.message) {
+      parts.push(error.message);
+    }
+
+    const message = parts.join('\n');
+    const registryHost = resolvedChart
+      ? ociRegistryHost(resolvedChart.repoUrl)
+      : undefined;
+    if (registryHost && looksLikeAuthFailure(message)) {
+      parts.push(
+        `Private OCI registry authentication may be required. Run 'helm registry login ${registryHost}' or your provider login command, then retry.`,
+      );
+    }
+
+    return new Error(parts.join('\n'));
   }
   return new Error(`Helm command failed using '${helmPath}'.`);
 }
@@ -285,11 +349,16 @@ export class ChartCache {
         await writeJson(entryPath, { metadata } satisfies CacheEntry);
         return metadata;
       } catch (error) {
-        const message = formatHelmError(error, helmPath).message;
+        const message = formatHelmError(
+          error,
+          helmPath,
+          resolvedChart,
+          invocation,
+        ).message;
         await writeJson(entryPath, {
           failure: { message, failedAt: this.now() },
         } satisfies CacheEntry);
-        throw formatHelmError(error, helmPath);
+        throw new Error(message);
       } finally {
         this.inFlightLoads.delete(key);
       }

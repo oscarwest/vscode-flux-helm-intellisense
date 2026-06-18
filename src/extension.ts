@@ -86,6 +86,10 @@ function buildHelmCommandText(
   return formatHelmInvocationForShell(invocation);
 }
 
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'unknown error';
+}
+
 async function openDocumentAt(
   uri: vscode.Uri,
 ): Promise<vscode.TextDocument | undefined> {
@@ -169,7 +173,10 @@ class FluxHelmValuesService {
       this.output.appendLine(
         `[diagnostics] ${document.uri.fsPath} -> ${allDiagnostics.length} diagnostics`,
       );
-    } catch {
+    } catch (error) {
+      this.output.appendLine(
+        `[diagnostics] Failed for ${document.uri.fsPath}: ${formatErrorMessage(error)}`,
+      );
       this.diagnostics.delete(document.uri);
     }
   }
@@ -200,8 +207,10 @@ class FluxHelmValuesService {
             document.positionAt(context.valuesNode?.range?.[0] ?? 0),
             force,
           );
-        } catch {
-          // Keep warming best-effort. Errors surface through commands and diagnostics.
+        } catch (error) {
+          this.output.appendLine(
+            `[warm] Failed for ${document.uri.fsPath}: ${formatErrorMessage(error)}`,
+          );
         }
       }
     })().finally(() => {
@@ -337,10 +346,10 @@ export function activate(context: vscode.ExtensionContext): void {
             return lens;
           };
           return [
+            makeLens('copyHelm'),
             makeLens('summary'),
             makeLens('openSchema'),
             makeLens('openValues'),
-            makeLens('copyHelm'),
           ];
         });
       },
@@ -403,12 +412,15 @@ export function activate(context: vscode.ExtensionContext): void {
           }
 
           codeLens.command = {
-            title: 'Copy helm pull command',
+            title: '$(copy) Copy helm pull',
             command: 'fluxHelmValues.copyHelmCommandAt',
             arguments: [lens.documentUri, lens.position],
           };
           return codeLens;
         } catch (error) {
+          output.appendLine(
+            `[codelens] Failed for ${document.uri.fsPath}: ${formatErrorMessage(error)}`,
+          );
           codeLens.command = {
             title: `$(warning) ${error instanceof Error ? error.message : 'Flux Helm Values failed'}`,
             command: 'fluxHelmValues.showLogs',
@@ -511,6 +523,14 @@ export function activate(context: vscode.ExtensionContext): void {
         );
       }
     }),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration('fluxHelmValues.repositorySearchPaths')) {
+        invalidateWorkspaceRepositoryCache();
+        output.appendLine(
+          '[repository-index] Invalidated after repositorySearchPaths change',
+        );
+      }
+    }),
     vscode.workspace.onDidCreateFiles((event) => {
       invalidateWorkspaceRepositoryCache();
       output.appendLine(
@@ -556,7 +576,7 @@ export function activate(context: vscode.ExtensionContext): void {
           );
         } catch (error) {
           output.appendLine(
-            `[command] refreshChartCache failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+            `[command] refreshChartCache failed: ${formatErrorMessage(error)}`,
           );
           void vscode.window.showErrorMessage(
             error instanceof Error
@@ -606,7 +626,16 @@ export function activate(context: vscode.ExtensionContext): void {
           `Cache: ${loaded.metadata.chartDir}`,
         ];
         output.appendLine(`[command] ${lines.join(' | ')}`);
-        void vscode.window.showInformationMessage(lines.join(' | '));
+        const copy = 'Copy Helm Pull';
+        const selected = await vscode.window.showInformationMessage(
+          lines.join(' | '),
+          copy,
+        );
+        if (selected === copy) {
+          await vscode.commands.executeCommand(
+            'fluxHelmValues.copyHelmCommand',
+          );
+        }
       },
     ),
     vscode.commands.registerCommand(
@@ -635,7 +664,18 @@ export function activate(context: vscode.ExtensionContext): void {
           `Cache: ${loaded.metadata.chartDir}`,
         ];
         output.appendLine(`[command] ${lines.join(' | ')}`);
-        void vscode.window.showInformationMessage(lines.join(' | '));
+        const copy = 'Copy Helm Pull';
+        const selected = await vscode.window.showInformationMessage(
+          lines.join(' | '),
+          copy,
+        );
+        if (selected === copy) {
+          await vscode.commands.executeCommand(
+            'fluxHelmValues.copyHelmCommandAt',
+            uri,
+            position,
+          );
+        }
       },
     ),
     vscode.commands.registerCommand(
@@ -644,6 +684,23 @@ export function activate(context: vscode.ExtensionContext): void {
         const targetUri = vscode.Uri.file(targetPath);
         const document = await vscode.workspace.openTextDocument(targetUri);
         await vscode.window.showTextDocument(document, { preview: false });
+      },
+    ),
+    vscode.commands.registerCommand(
+      'fluxHelmValues.copyHelmCommand',
+      async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+          void vscode.window.showWarningMessage(
+            'Open a HelmRelease YAML document first.',
+          );
+          return;
+        }
+        await vscode.commands.executeCommand(
+          'fluxHelmValues.copyHelmCommandAt',
+          editor.document.uri,
+          editor.selection.active,
+        );
       },
     ),
     vscode.commands.registerCommand(
@@ -669,7 +726,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const commandText = buildHelmCommandText(loaded, helmPath);
         await vscode.env.clipboard.writeText(commandText);
         output.appendLine(
-          `[command] Copied helm pull command for ${loaded.resolved.chart}`,
+          `[command] Copied helm pull command for ${loaded.resolved.chart}: ${commandText}`,
         );
         void vscode.window.showInformationMessage(
           `Copied helm pull command for ${loaded.resolved.chart}.`,
@@ -684,7 +741,7 @@ export function activate(context: vscode.ExtensionContext): void {
           output.appendLine(`[command] Helm setup OK: ${version}`);
         } catch (error) {
           output.appendLine(
-            `[command] checkHelmSetup failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+            `[command] checkHelmSetup failed: ${formatErrorMessage(error)}`,
           );
           void vscode.window.showErrorMessage(
             error instanceof Error ? error.message : 'Helm setup check failed.',

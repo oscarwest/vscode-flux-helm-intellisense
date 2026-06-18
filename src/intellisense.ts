@@ -380,6 +380,34 @@ function indentationOfLine(lineText: string): number {
   return indentation;
 }
 
+function emptyMapKeyFromLine(trimmedLine: string): string | undefined {
+  const match = trimmedLine.match(/^(?:-\s+)?(.+?):(?:\s*#.*)?$/);
+  if (!match) {
+    return undefined;
+  }
+
+  const key = match[1]?.trim();
+  if (!key) {
+    return undefined;
+  }
+
+  if (
+    (key.startsWith('"') && key.endsWith('"')) ||
+    (key.startsWith("'") && key.endsWith("'"))
+  ) {
+    return key.slice(1, -1);
+  }
+
+  return key;
+}
+
+function pathWithMapKey(path: string[], key: string | undefined): string[] {
+  if (!key || path[path.length - 1] === key) {
+    return path;
+  }
+  return [...path, key];
+}
+
 function getCompletionPathForBlankLine(
   document: vscode.TextDocument,
   position: vscode.Position,
@@ -405,10 +433,11 @@ function getCompletionPathForBlankLine(
       valuesRoot,
       document.offsetAt(new vscode.Position(line, text.length)),
     ).filter((segment) => segment !== 'items');
+    const emptyMapKey = emptyMapKeyFromLine(trimmed);
 
-    if (trimmed.endsWith(':')) {
+    if (emptyMapKey) {
       if (currentIndent > indent) {
-        return previousPath;
+        return pathWithMapKey(previousPath, emptyMapKey);
       }
       return previousPath.slice(0, -1);
     }

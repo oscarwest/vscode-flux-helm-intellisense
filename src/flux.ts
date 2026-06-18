@@ -1,3 +1,4 @@
+import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import type { Document, Node, Pair } from 'yaml';
@@ -25,11 +26,18 @@ interface IndexedYamlDocument extends ParsedYamlDocument {
 interface RepositoryCacheEntry {
   repositories: HelmRepositoryResource[];
   loadedAt: number;
+  cacheKey?: string;
 }
 
 const REPOSITORY_CACHE_TTL_MS = 60 * 1000;
 let repositoryCache: RepositoryCacheEntry | undefined;
 let repositoryCachePromise: Promise<HelmRepositoryResource[]> | undefined;
+let configuredRepositoryCache: RepositoryCacheEntry | undefined;
+let configuredRepositoryCachePromise:
+  | Promise<HelmRepositoryResource[]>
+  | undefined;
+const YAML_FILE_PATTERN = '**/*.{yaml,yml}';
+const YAML_EXCLUDE_PATTERN = '**/{node_modules,.git,out,dist}/**';
 
 function isObjectLike(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -345,14 +353,8 @@ export function findAllValuesContexts(
 
 async function collectWorkspaceYamlUris(): Promise<vscode.Uri[]> {
   const [yamlFiles, ymlFiles] = await Promise.all([
-    vscode.workspace.findFiles(
-      '**/*.yaml',
-      '**/{node_modules,.git,out,dist}/**',
-    ),
-    vscode.workspace.findFiles(
-      '**/*.yml',
-      '**/{node_modules,.git,out,dist}/**',
-    ),
+    vscode.workspace.findFiles('**/*.yaml', YAML_EXCLUDE_PATTERN),
+    vscode.workspace.findFiles('**/*.yml', YAML_EXCLUDE_PATTERN),
   ]);
   return [...yamlFiles, ...ymlFiles];
 }
@@ -373,6 +375,8 @@ async function collectNearbyYamlUris(
 export function invalidateWorkspaceRepositoryCache(): void {
   repositoryCache = undefined;
   repositoryCachePromise = undefined;
+  configuredRepositoryCache = undefined;
+  configuredRepositoryCachePromise = undefined;
 }
 
 export async function loadWorkspaceRepositories(
@@ -441,6 +445,148 @@ export async function loadSiblingRepositories(
   return repositories;
 }
 
+function getConfiguredRepositorySearchPaths(): string[] {
+  return vscode.workspace
+    .getConfiguration('fluxHelmValues')
+    .get<string[]>('repositorySearchPaths', [])
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function hasGlobPattern(value: string): boolean {
+  return /[*?[\]{}]/.test(value);
+}
+
+function normalizeConfiguredPath(
+  entry: string,
+  workspaceFolder?: string,
+): string {
+  if (path.isAbsolute(entry)) {
+    return path.normalize(entry);
+  }
+  return path.normalize(path.join(workspaceFolder ?? process.cwd(), entry));
+}
+
+function splitGlobBase(pattern: string): { base: string; pattern: string } {
+  const parsed = path.parse(pattern);
+  const relative = pattern.slice(parsed.root.length);
+  const segments = relative.split(path.sep);
+  const globIndex = segments.findIndex((segment) => hasGlobPattern(segment));
+  if (globIndex === -1) {
+    return { base: pattern, pattern: YAML_FILE_PATTERN };
+  }
+  const baseSegments = segments.slice(0, globIndex);
+  const patternSegments = segments.slice(globIndex);
+  return {
+    base: path.join(parsed.root, ...baseSegments),
+    pattern: patternSegments.join('/'),
+  };
+}
+
+async function collectYamlUrisFromConfiguredPath(
+  entry: string,
+): Promise<vscode.Uri[]> {
+  const workspaceFolders = vscode.workspace.workspaceFolders?.map(
+    (folder) => folder.uri.fsPath,
+  ) ?? [undefined];
+  const uris: vscode.Uri[] = [];
+
+  for (const workspaceFolder of workspaceFolders) {
+    const target = normalizeConfiguredPath(entry, workspaceFolder);
+    if (hasGlobPattern(target)) {
+      const glob = splitGlobBase(target);
+      uris.push(
+        ...(await vscode.workspace.findFiles(
+          new vscode.RelativePattern(glob.base, glob.pattern),
+          YAML_EXCLUDE_PATTERN,
+        )),
+      );
+      continue;
+    }
+
+    try {
+      const stat = await fs.stat(target);
+      if (stat.isFile() && /\.(ya?ml)$/i.test(target)) {
+        uris.push(vscode.Uri.file(target));
+      }
+      if (stat.isDirectory()) {
+        uris.push(
+          ...(await vscode.workspace.findFiles(
+            new vscode.RelativePattern(target, YAML_FILE_PATTERN),
+            YAML_EXCLUDE_PATTERN,
+          )),
+        );
+      }
+    } catch {
+      // Ignore missing or unreadable configured paths. Resolution will continue.
+    }
+  }
+
+  return uris;
+}
+
+async function readYamlDocumentText(uri: vscode.Uri): Promise<string> {
+  try {
+    const bytes = await vscode.workspace.fs.readFile(uri);
+    return Buffer.from(bytes).toString('utf8');
+  } catch {
+    return fs.readFile(uri.fsPath, 'utf8');
+  }
+}
+
+export async function loadConfiguredRepositories(): Promise<
+  HelmRepositoryResource[]
+> {
+  const searchPaths = getConfiguredRepositorySearchPaths();
+  if (searchPaths.length === 0) {
+    return [];
+  }
+
+  const cacheKey = JSON.stringify(searchPaths);
+  if (
+    configuredRepositoryCache &&
+    configuredRepositoryCache.cacheKey === cacheKey &&
+    Date.now() - configuredRepositoryCache.loadedAt < REPOSITORY_CACHE_TTL_MS
+  ) {
+    return configuredRepositoryCache.repositories;
+  }
+
+  if (configuredRepositoryCachePromise) {
+    return configuredRepositoryCachePromise;
+  }
+
+  configuredRepositoryCachePromise = (async () => {
+    const seen = new Set<string>();
+    const repositories: HelmRepositoryResource[] = [];
+    for (const searchPath of searchPaths) {
+      const uris = await collectYamlUrisFromConfiguredPath(searchPath);
+      for (const uri of uris) {
+        const key = uri.toString();
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        const text = await readYamlDocumentText(uri);
+        repositories.push(
+          ...getHelmRepositories(parseYamlDocuments(text, uri)),
+        );
+      }
+    }
+    configuredRepositoryCache = {
+      repositories,
+      loadedAt: Date.now(),
+      cacheKey,
+    };
+    configuredRepositoryCachePromise = undefined;
+    return repositories;
+  })().catch((error) => {
+    configuredRepositoryCachePromise = undefined;
+    throw error;
+  });
+
+  return configuredRepositoryCachePromise;
+}
+
 export async function resolveChartForDocument(
   document: vscode.TextDocument,
   position?: vscode.Position,
@@ -456,10 +602,16 @@ export async function resolveChartForDocument(
   const sameFileRepos = getHelmRepositories(parsed);
   const siblingRepos = await loadSiblingRepositories(document.uri);
   const workspaceRepos = await loadWorkspaceRepositories(document.uri);
+  const localRepos = [...sameFileRepos, ...siblingRepos, ...workspaceRepos];
+  const locallyResolved = resolveChartFromResources(targetRelease, localRepos);
+  if (locallyResolved) {
+    return locallyResolved;
+  }
+
+  const configuredRepos = await loadConfiguredRepositories();
   return resolveChartFromResources(targetRelease, [
-    ...sameFileRepos,
-    ...siblingRepos,
-    ...workspaceRepos,
+    ...localRepos,
+    ...configuredRepos,
   ]);
 }
 

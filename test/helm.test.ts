@@ -7,6 +7,7 @@ import {
   buildHelmPullInvocation,
   ChartCache,
   checkHelmExecutable,
+  formatHelmError,
   formatHelmInvocationForShell,
 } from '../src/helm';
 import type { ResolvedChart } from '../src/types';
@@ -113,6 +114,43 @@ describe('helm pull invocation', () => {
       ['version', '--short'],
       expect.any(Object),
     );
+  });
+
+  it('formats helm pull failures with exit code and command output', () => {
+    const error = Object.assign(new Error('Command failed'), {
+      code: 1,
+      stdout: 'partial output\n',
+      stderr: 'Error: chart not found\n',
+    });
+
+    const formatted = formatHelmError(error, 'helm').message;
+
+    expect(formatted).toContain("Helm command failed using 'helm'.");
+    expect(formatted).toContain('Exit code: 1.');
+    expect(formatted).toContain('stderr: Error: chart not found');
+    expect(formatted).toContain('stdout: partial output');
+  });
+
+  it('adds a private OCI auth hint for authorization failures', () => {
+    const error = Object.assign(new Error('Command failed'), {
+      code: 1,
+      stderr: 'Error: unexpected status from HEAD request: 401 Unauthorized',
+    });
+    const chart = createResolvedChart({
+      repoUrl: 'oci://acrvcedcsp.azurecr.io/helm/dev',
+      isOci: true,
+      version: '*',
+    });
+    const invocation = buildHelmPullInvocation('helm', chart, '/tmp/cache dir');
+
+    const formatted = formatHelmError(error, 'helm', chart, invocation).message;
+
+    expect(formatted).toContain(
+      "Command: 'helm' 'pull' 'oci://acrvcedcsp.azurecr.io/helm/dev/demo' '--version' '*'",
+    );
+    expect(formatted).toContain('Exit code: 1.');
+    expect(formatted).toContain('401 Unauthorized');
+    expect(formatted).toContain('helm registry login acrvcedcsp.azurecr.io');
   });
 
   it('loads metadata from mocked helm output and reuses fresh cache entries', async () => {
