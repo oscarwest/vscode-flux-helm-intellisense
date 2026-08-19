@@ -1,3 +1,9 @@
+## [1.3.1](https://github.com/oscarwest/vscode-flux-helm-intellisense/compare/v1.3.0...v1.3.1) (2026-08-19)
+
+### Bug Fixes
+
+* make values completions indentation-aware ([9d1fea0](https://github.com/oscarwest/vscode-flux-helm-intellisense/commit/9d1fea0c1b00de9f94b93ace40a6b234f13ccfb3))
+
 ## [1.3.0](https://github.com/oscarwest/vscode-flux-helm-intellisense/compare/v1.2.0...v1.3.0) (2026-08-19)
 
 ### Features
