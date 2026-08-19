@@ -8,6 +8,7 @@ import type { ChartLoadFailure, ChartMetadata, ResolvedChart } from './types';
 
 const execFileAsync = promisify(execFile);
 const FAILURE_TTL_MS = 5 * 60 * 1000;
+const MAX_FILTERED_VERSION_CANDIDATES = 25;
 
 type HelmRunner = typeof execFileAsync;
 
@@ -33,6 +34,17 @@ interface HelmProcessError extends Error {
   stdout?: string | Buffer;
   stderr?: string | Buffer;
 }
+
+class HelmInvocationFailure extends Error {
+  public constructor(
+    public readonly cause: unknown,
+    public readonly invocation: HelmPullInvocation,
+  ) {
+    super(cause instanceof Error ? cause.message : 'Helm command failed.');
+  }
+}
+
+class OCIReferenceResolutionError extends Error {}
 
 function shellQuotePosix(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -66,6 +78,14 @@ export function formatHelmError(
   resolvedChart?: ResolvedChart,
   invocation?: HelmPullInvocation,
 ): Error {
+  if (error instanceof HelmInvocationFailure) {
+    return formatHelmError(
+      error.cause,
+      helmPath,
+      resolvedChart,
+      error.invocation,
+    );
+  }
   if (
     typeof error === 'object' &&
     error !== null &&
@@ -148,12 +168,13 @@ export function buildHelmPullInvocation(
   const targetDir = path.join(untarDir, 'pull');
   const version = resolvedChart.version;
   if (resolvedChart.isOci) {
+    const chartRef = buildOCIChartReference(resolvedChart);
     return {
       executable: helmPath,
-      chartRef: `${resolvedChart.repoUrl.replace(/\/$/, '')}/${resolvedChart.chart}`,
+      chartRef,
       args: [
         'pull',
-        `${resolvedChart.repoUrl.replace(/\/$/, '')}/${resolvedChart.chart}`,
+        chartRef,
         ...(version ? ['--version', version] : []),
         '--untar',
         '--untardir',
@@ -178,6 +199,133 @@ export function buildHelmPullInvocation(
   };
 }
 
+function buildOCIChartReference(resolvedChart: ResolvedChart): string {
+  const base = `${resolvedChart.repoUrl.replace(/\/$/, '')}/${resolvedChart.chart}`;
+  if (resolvedChart.digest) {
+    return `${base}@${resolvedChart.digest}`;
+  }
+  if (resolvedChart.tag) {
+    return `${base}:${resolvedChart.tag}`;
+  }
+  return base;
+}
+
+function buildHelmShowInvocation(
+  helmPath: string,
+  resolvedChart: ResolvedChart,
+  version: string,
+): HelmPullInvocation {
+  const chartRef = buildOCIChartReference({
+    ...resolvedChart,
+    tag: undefined,
+    digest: undefined,
+  });
+  return {
+    executable: helmPath,
+    chartRef,
+    args: ['show', 'chart', chartRef, '--version', version],
+  };
+}
+
+function extractChartVersion(stdout: unknown): string | undefined {
+  return `${stdout ?? ''}`
+    .split(/\r?\n/)
+    .find((line) => line.startsWith('version:'))
+    ?.slice('version:'.length)
+    .trim()
+    .replace(/^(['"])(.*)\1$/, '$2');
+}
+
+function matchesSemverFilter(version: string, filter: RegExp): boolean {
+  const registryTag = version.replace(/\+/g, '_');
+  filter.lastIndex = 0;
+  return filter.test(registryTag);
+}
+
+function constrainSemverBelow(constraint: string, version: string): string {
+  return constraint
+    .split(/\s*\|\|\s*/)
+    .map((branch) => {
+      const normalized = branch.trim();
+      return normalized === '' || normalized === '*'
+        ? `< ${version}`
+        : `${normalized}, < ${version}`;
+    })
+    .join(' || ');
+}
+
+async function resolveFilteredOCIChartVersion(
+  helmPath: string,
+  resolvedChart: ResolvedChart,
+  runHelm: HelmRunner,
+  cwd: string,
+): Promise<string> {
+  const requestedVersion = resolvedChart.version;
+  const filterText = resolvedChart.semverFilter;
+  if (!requestedVersion || !filterText) {
+    throw new OCIReferenceResolutionError(
+      'Filtered OCI version resolution requires both semver and semverFilter.',
+    );
+  }
+
+  let filter: RegExp;
+  try {
+    filter = new RegExp(filterText);
+  } catch (error) {
+    const detail = error instanceof Error ? ` ${error.message}` : '';
+    throw new OCIReferenceResolutionError(
+      `Invalid OCIRepository semverFilter '${filterText}'.${detail}`,
+    );
+  }
+
+  let constraint = requestedVersion;
+  const seen = new Set<string>();
+  for (
+    let attempt = 0;
+    attempt < MAX_FILTERED_VERSION_CANDIDATES;
+    attempt += 1
+  ) {
+    const invocation = buildHelmShowInvocation(
+      helmPath,
+      resolvedChart,
+      constraint,
+    );
+    let result: Awaited<ReturnType<HelmRunner>>;
+    try {
+      result = await runHelm(invocation.executable, invocation.args, {
+        env: process.env,
+        cwd,
+        windowsHide: true,
+        maxBuffer: 10 * 1024 * 1024,
+      });
+    } catch (error) {
+      throw new HelmInvocationFailure(error, invocation);
+    }
+
+    const candidate = extractChartVersion(result.stdout);
+    if (!candidate) {
+      throw new OCIReferenceResolutionError(
+        `Helm did not report a chart version while resolving semver '${requestedVersion}' with filter '${filterText}'.`,
+      );
+    }
+    if (seen.has(candidate)) {
+      throw new OCIReferenceResolutionError(
+        `Helm repeatedly resolved OCI chart version '${candidate}' while applying semverFilter '${filterText}'.`,
+      );
+    }
+    seen.add(candidate);
+
+    if (matchesSemverFilter(candidate, filter)) {
+      return candidate;
+    }
+    constraint = constrainSemverBelow(requestedVersion, candidate);
+  }
+
+  throw new OCIReferenceResolutionError(
+    `No matching OCI chart version was found after checking ${MAX_FILTERED_VERSION_CANDIDATES} candidates for semver '${requestedVersion}' with filter '${filterText}'.`,
+  );
+}
+
 function createCacheKey(chart: ResolvedChart): string {
   return crypto
     .createHash('sha256')
@@ -186,6 +334,9 @@ function createCacheKey(chart: ResolvedChart): string {
         repoUrl: chart.repoUrl,
         chart: chart.chart,
         requestedVersion: chart.version ?? '',
+        requestedTag: chart.tag ?? '',
+        requestedDigest: chart.digest ?? '',
+        semverFilter: chart.semverFilter ?? '',
         releaseNamespace: chart.release.metadata.namespace ?? '',
         repositoryNamespace: chart.repository.metadata.namespace ?? '',
       }),
@@ -238,10 +389,7 @@ async function discoverMetadata(chartDir: string): Promise<ChartMetadata> {
 
   if (await fileExists(chartYamlPath)) {
     const chartYaml = await fs.readFile(chartYamlPath, 'utf8');
-    const versionLine = chartYaml
-      .split(/\r?\n/)
-      .find((line) => line.startsWith('version:'));
-    resolvedVersion = versionLine?.slice('version:'.length).trim();
+    resolvedVersion = extractChartVersion(chartYaml);
   }
 
   return {
@@ -326,13 +474,22 @@ export class ChartCache {
       const helmPath = vscode.workspace
         .getConfiguration('fluxHelmValues')
         .get<string>('helmPath', 'helm');
-      const invocation = buildHelmPullInvocation(
-        helmPath,
-        resolvedChart,
-        runDir,
-      );
+      let invocation: HelmPullInvocation | undefined;
 
       try {
+        const effectiveChart = resolvedChart.semverFilter
+          ? {
+              ...resolvedChart,
+              version: await resolveFilteredOCIChartVersion(
+                helmPath,
+                resolvedChart,
+                this.runHelm,
+                runDir,
+              ),
+              semverFilter: undefined,
+            }
+          : resolvedChart;
+        invocation = buildHelmPullInvocation(helmPath, effectiveChart, runDir);
         await this.runHelm(invocation.executable, invocation.args, {
           env: process.env,
           cwd: runDir,
@@ -349,12 +506,11 @@ export class ChartCache {
         await writeJson(entryPath, { metadata } satisfies CacheEntry);
         return metadata;
       } catch (error) {
-        const message = formatHelmError(
-          error,
-          helmPath,
-          resolvedChart,
-          invocation,
-        ).message;
+        const message =
+          error instanceof OCIReferenceResolutionError
+            ? error.message
+            : formatHelmError(error, helmPath, resolvedChart, invocation)
+                .message;
         await writeJson(entryPath, {
           failure: { message, failedAt: this.now() },
         } satisfies CacheEntry);

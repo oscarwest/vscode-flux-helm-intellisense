@@ -90,6 +90,56 @@ describe('helm pull invocation', () => {
     ]);
   });
 
+  it('builds exact tag-pinned OCI pull arguments', () => {
+    const invocation = buildHelmPullInvocation(
+      'helm',
+      createResolvedChart({
+        repoUrl: 'oci://ghcr.io/example/charts',
+        chart: 'demo',
+        version: undefined,
+        tag: 'release-candidate',
+        isOci: true,
+      }),
+      '/tmp/cache',
+    );
+
+    expect(invocation.chartRef).toBe(
+      'oci://ghcr.io/example/charts/demo:release-candidate',
+    );
+    expect(invocation.args).toEqual([
+      'pull',
+      'oci://ghcr.io/example/charts/demo:release-candidate',
+      '--untar',
+      '--untardir',
+      '/tmp/cache/pull',
+    ]);
+  });
+
+  it('builds digest-pinned OCI pull arguments', () => {
+    const invocation = buildHelmPullInvocation(
+      'helm',
+      createResolvedChart({
+        repoUrl: 'oci://ghcr.io/example/charts',
+        chart: 'demo',
+        version: undefined,
+        digest: 'sha256:abcdef',
+        isOci: true,
+      }),
+      '/tmp/cache',
+    );
+
+    expect(invocation.chartRef).toBe(
+      'oci://ghcr.io/example/charts/demo@sha256:abcdef',
+    );
+    expect(invocation.args).toEqual([
+      'pull',
+      'oci://ghcr.io/example/charts/demo@sha256:abcdef',
+      '--untar',
+      '--untardir',
+      '/tmp/cache/pull',
+    ]);
+  });
+
   it('formats helm invocations for POSIX shells', () => {
     const invocation = buildHelmPullInvocation(
       'helm',
@@ -201,6 +251,101 @@ describe('helm pull invocation', () => {
     expect(first.valuesPath).toBe(path.join(first.chartDir, 'values.yaml'));
     expect(first.resolvedVersion).toBe('9.9.9');
     expect(second.chartDir).toBe(first.chartDir);
+  });
+
+  it('walks semver candidates until semverFilter matches', async () => {
+    const storageDir = await createTempDir();
+    const shownVersions = ['2.0.0', '1.9.0', '1.9.0-rc.2'];
+    const runHelm = vi.fn(
+      async (
+        _executable: string,
+        args: string[],
+        options?: { cwd?: string },
+      ) => {
+        if (args[0] === 'show') {
+          const version = shownVersions.shift();
+          return {
+            stdout: `apiVersion: v2\nname: demo\nversion: ${version}\n`,
+            stderr: '',
+          };
+        }
+
+        expect(args.slice(0, 4)).toEqual([
+          'pull',
+          'oci://ghcr.io/example/charts/demo',
+          '--version',
+          '1.9.0-rc.2',
+        ]);
+        const chartDir = path.join(options?.cwd ?? storageDir, 'pull', 'demo');
+        await fs.mkdir(chartDir, { recursive: true });
+        await fs.writeFile(
+          path.join(chartDir, 'Chart.yaml'),
+          'apiVersion: v2\nname: demo\nversion: 1.9.0-rc.2\n',
+          'utf8',
+        );
+        await fs.writeFile(
+          path.join(chartDir, 'values.yaml'),
+          'enabled: true\n',
+          'utf8',
+        );
+        return { stdout: '', stderr: '' };
+      },
+    );
+    const cache = new ChartCache(
+      {
+        globalStorageUri: vscode.Uri.file(storageDir),
+      } as vscode.ExtensionContext,
+      { runHelm },
+    );
+
+    const metadata = await cache.load(
+      createResolvedChart({
+        repository: {
+          kind: 'OCIRepository',
+          metadata: { name: 'demo', namespace: 'apps' },
+          spec: { url: 'oci://ghcr.io/example/charts/demo' },
+          documentUri: vscode.Uri.file('/workspace/repo.yaml'),
+        },
+        repoUrl: 'oci://ghcr.io/example/charts',
+        isOci: true,
+        version: '>= 1.0.0-0',
+        semverFilter: '.*-rc\\..*',
+      }),
+    );
+
+    expect(metadata.resolvedVersion).toBe('1.9.0-rc.2');
+    expect(runHelm).toHaveBeenCalledTimes(4);
+    expect(runHelm.mock.calls[1]?.[1]).toContain('>= 1.0.0-0, < 2.0.0');
+    expect(runHelm.mock.calls[2]?.[1]).toContain('>= 1.0.0-0, < 1.9.0');
+  });
+
+  it('reports invalid semverFilter without invoking Helm', async () => {
+    const storageDir = await createTempDir();
+    const runHelm = vi.fn();
+    const cache = new ChartCache(
+      {
+        globalStorageUri: vscode.Uri.file(storageDir),
+      } as vscode.ExtensionContext,
+      { runHelm },
+    );
+
+    await expect(
+      cache.load(
+        createResolvedChart({
+          repository: {
+            kind: 'OCIRepository',
+            metadata: { name: 'demo', namespace: 'apps' },
+            spec: { url: 'oci://ghcr.io/example/charts/demo' },
+            documentUri: vscode.Uri.file('/workspace/repo.yaml'),
+          },
+          repoUrl: 'oci://ghcr.io/example/charts',
+          isOci: true,
+          version: '*',
+          semverFilter: '[invalid',
+        }),
+      ),
+    ).rejects.toThrow("Invalid OCIRepository semverFilter '[invalid'");
+    expect(runHelm).not.toHaveBeenCalled();
   });
 
   it('memoizes failed helm pulls for the short failure TTL', async () => {

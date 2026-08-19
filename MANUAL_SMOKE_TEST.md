@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - `helm` is installed locally and available on `PATH`, or set `fluxHelmValues.helmPath` to the absolute executable path.
-- You have a Flux repository open in VS Code with `HelmRelease` and `HelmRepository` YAML files.
+- You have a Flux repository open in VS Code with `HelmRelease` and matching `HelmRepository` or `OCIRepository` YAML files.
 - Run `npm install` and `npm run compile` in this extension repository.
 
 ## Launch The Extension
@@ -20,14 +20,17 @@ Use any of these Flux files or equivalent local copies:
 - `infrastructure/base/controllers/cert-manager.yaml`
 - `infrastructure/timescaledb/dev/operator/releases.yaml`
 - `infrastructure/monitoring-stack/dev/setup/releases.yaml`
+- `test/fixtures/infrastructure/oci/cert-manager.yaml`
 
 ## Verify Resolution
 
 1. Open a YAML file containing a Flux `HelmRelease`.
-2. Confirm the file also contains a matching `HelmRepository`, or that one exists elsewhere in the workspace.
+2. Confirm the file also contains a matching `HelmRepository` or `OCIRepository`, or that one exists elsewhere in the workspace.
 3. Place the cursor inside `spec.values`.
 4. Run `Flux Helm Values: Show Resolved Chart` from the Command Palette.
 5. Confirm the message shows the expected repository URL, chart name, requested version, and cache directory.
+
+For an `OCIRepository`, also exercise an exact `ref.tag`, an omitted `ref` (the extension approximates Flux's `latest` default with Helm's latest stable SemVer), and a `ref.semver` plus `ref.semverFilter`. Confirm the copied Helm command uses the exact tag, the `*` fallback, or the concrete version selected by the filter.
 
 ## Verify Schema-Backed IntelliSense
 

@@ -20,6 +20,29 @@ export interface HelmRepositoryResource {
   documentUri: vscode.Uri;
 }
 
+export interface OCIRepositoryResource {
+  apiVersion?: string;
+  kind: 'OCIRepository';
+  metadata: {
+    name: string;
+    namespace?: string;
+  };
+  spec: {
+    url?: string;
+    ref?: {
+      tag?: string;
+      semver?: string;
+      semverFilter?: string;
+      digest?: string;
+    };
+  };
+  documentUri: vscode.Uri;
+}
+
+export type ChartSourceResource =
+  | HelmRepositoryResource
+  | OCIRepositoryResource;
+
 export interface HelmReleaseChartSpec {
   chart?: string;
   version?: string;
@@ -37,6 +60,7 @@ export interface HelmReleaseResource {
     chart?: {
       spec?: HelmReleaseChartSpec;
     };
+    chartRef?: SourceRef;
     values?: unknown;
   };
   documentUri: vscode.Uri;
@@ -60,9 +84,12 @@ export interface ValuesContext {
 
 export interface ResolvedChart {
   release: HelmReleaseResource;
-  repository: HelmRepositoryResource;
+  repository: ChartSourceResource;
   chart: string;
   version?: string;
+  tag?: string;
+  digest?: string;
+  semverFilter?: string;
   repoUrl: string;
   isOci: boolean;
 }

@@ -37,11 +37,22 @@ function shortenSource(repoUrl: string): string {
   return repoUrl.replace(/^oci:\/\//, '').replace(/^https?:\/\//, '');
 }
 
+function getRequestedRevision(loaded: LoadedMetadata): string {
+  const requested =
+    loaded.resolved.digest ??
+    loaded.resolved.tag ??
+    loaded.resolved.version ??
+    'latest compatible';
+  return loaded.resolved.semverFilter
+    ? `${requested} filtered by /${loaded.resolved.semverFilter}/`
+    : requested;
+}
+
 function buildStatusTooltip(loaded: LoadedMetadata): vscode.MarkdownString {
   const tooltip = new vscode.MarkdownString();
   tooltip.appendMarkdown(`**Chart**: ${loaded.resolved.chart}\n\n`);
   tooltip.appendMarkdown(
-    `**Requested version**: ${loaded.resolved.version ?? 'latest compatible'}\n\n`,
+    `**Requested version**: ${getRequestedRevision(loaded)}\n\n`,
   );
   tooltip.appendMarkdown(
     `**Resolved version**: ${loaded.metadata.resolvedVersion ?? 'unknown'}\n\n`,
@@ -66,7 +77,11 @@ function getMetadataModeLabel(loaded: LoadedMetadata): string {
 
 function buildCodeLensTitle(loaded: LoadedMetadata): string {
   const version =
-    loaded.metadata.resolvedVersion ?? loaded.resolved.version ?? 'unknown';
+    loaded.metadata.resolvedVersion ??
+    loaded.resolved.tag ??
+    loaded.resolved.version ??
+    loaded.resolved.digest ??
+    'unknown';
   const source =
     loaded.resolved.repository.metadata.name ||
     shortenSource(loaded.resolved.repoUrl);
@@ -80,7 +95,13 @@ function buildHelmCommandText(
 ): string {
   const invocation = buildHelmPullInvocation(
     helmPath,
-    loaded.resolved,
+    loaded.resolved.semverFilter && loaded.metadata.resolvedVersion
+      ? {
+          ...loaded.resolved,
+          version: loaded.metadata.resolvedVersion,
+          semverFilter: undefined,
+        }
+      : loaded.resolved,
     loaded.metadata.chartDir,
   );
   return formatHelmInvocationForShell(invocation);
@@ -314,7 +335,11 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       const version =
-        loaded.metadata.resolvedVersion ?? loaded.resolved.version ?? 'unknown';
+        loaded.metadata.resolvedVersion ??
+        loaded.resolved.tag ??
+        loaded.resolved.version ??
+        loaded.resolved.digest ??
+        'unknown';
       const source =
         loaded.resolved.repository.metadata.name ||
         shortenSource(loaded.resolved.repoUrl);
@@ -646,7 +671,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const lines = [
           `Repository: ${loaded.resolved.repoUrl}`,
           `Chart: ${loaded.resolved.chart}`,
-          `Requested version: ${loaded.resolved.version ?? 'latest compatible'}`,
+          `Requested version: ${getRequestedRevision(loaded)}`,
           `Resolved version: ${loaded.metadata.resolvedVersion ?? 'unknown'}`,
           `Cache: ${loaded.metadata.chartDir}`,
         ];
@@ -683,7 +708,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const lines = [
           `Repository: ${loaded.resolved.repoUrl}`,
           `Chart: ${loaded.resolved.chart}`,
-          `Requested version: ${loaded.resolved.version ?? 'latest compatible'}`,
+          `Requested version: ${getRequestedRevision(loaded)}`,
           `Resolved version: ${loaded.metadata.resolvedVersion ?? 'unknown'}`,
           `Source mode: ${getMetadataModeLabel(loaded)}`,
           `Cache: ${loaded.metadata.chartDir}`,

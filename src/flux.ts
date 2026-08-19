@@ -12,8 +12,10 @@ import {
   type YAMLMap,
 } from 'yaml';
 import type {
+  ChartSourceResource,
   HelmReleaseResource,
   HelmRepositoryResource,
+  OCIRepositoryResource,
   ParsedYamlDocument,
   ResolvedChart,
   ValuesContext,
@@ -24,17 +26,17 @@ interface IndexedYamlDocument extends ParsedYamlDocument {
 }
 
 interface RepositoryCacheEntry {
-  repositories: HelmRepositoryResource[];
+  repositories: ChartSourceResource[];
   loadedAt: number;
   cacheKey?: string;
 }
 
 const REPOSITORY_CACHE_TTL_MS = 60 * 1000;
 let repositoryCache: RepositoryCacheEntry | undefined;
-let repositoryCachePromise: Promise<HelmRepositoryResource[]> | undefined;
+let repositoryCachePromise: Promise<ChartSourceResource[]> | undefined;
 let configuredRepositoryCache: RepositoryCacheEntry | undefined;
 let configuredRepositoryCachePromise:
-  | Promise<HelmRepositoryResource[]>
+  | Promise<ChartSourceResource[]>
   | undefined;
 const YAML_FILE_PATTERN = '**/*.{yaml,yml}';
 const YAML_EXCLUDE_PATTERN = '**/{node_modules,.git,out,dist}/**';
@@ -126,6 +128,19 @@ function isHelmRepositoryObject(
   );
 }
 
+function isOCIRepositoryObject(root: unknown): root is Record<string, unknown> {
+  if (!isObjectLike(root)) {
+    return false;
+  }
+  const apiVersion = getString(root.apiVersion);
+  const kind = getString(root.kind);
+  return (
+    kind === 'OCIRepository' &&
+    typeof apiVersion === 'string' &&
+    apiVersion.startsWith('source.toolkit.fluxcd.io/')
+  );
+}
+
 export function getHelmReleases(
   documents: ParsedYamlDocument[],
 ): HelmReleaseResource[] {
@@ -176,6 +191,38 @@ export function getHelmRepositories(
       } satisfies HelmRepositoryResource,
     ];
   });
+}
+
+export function getOCIRepositories(
+  documents: ParsedYamlDocument[],
+): OCIRepositoryResource[] {
+  return documents.flatMap((document) => {
+    if (!isOCIRepositoryObject(document.root)) {
+      return [];
+    }
+    const metadata = isObjectLike(document.root.metadata)
+      ? document.root.metadata
+      : {};
+    const spec = isObjectLike(document.root.spec) ? document.root.spec : {};
+    return [
+      {
+        apiVersion: getString(document.root.apiVersion),
+        kind: 'OCIRepository',
+        metadata: {
+          name: getName(metadata) ?? '',
+          namespace: getNamespace(metadata),
+        },
+        spec: spec as OCIRepositoryResource['spec'],
+        documentUri: document.uri,
+      } satisfies OCIRepositoryResource,
+    ];
+  });
+}
+
+function getChartSources(
+  documents: ParsedYamlDocument[],
+): ChartSourceResource[] {
+  return [...getHelmRepositories(documents), ...getOCIRepositories(documents)];
 }
 
 function getPairValue(map: YAMLMap | undefined, key: string): Node | undefined {
@@ -381,7 +428,7 @@ export function invalidateWorkspaceRepositoryCache(): void {
 
 export async function loadWorkspaceRepositories(
   activeUri?: vscode.Uri,
-): Promise<HelmRepositoryResource[]> {
+): Promise<ChartSourceResource[]> {
   if (
     repositoryCache &&
     Date.now() - repositoryCache.loadedAt < REPOSITORY_CACHE_TTL_MS
@@ -404,14 +451,14 @@ export async function loadWorkspaceRepositories(
 
   repositoryCachePromise = (async () => {
     const uris = await collectWorkspaceYamlUris();
-    const repositories: HelmRepositoryResource[] = [];
+    const repositories: ChartSourceResource[] = [];
     for (const uri of uris) {
       if (activeUri && uri.toString() === activeUri.toString()) {
         continue;
       }
       const bytes = await vscode.workspace.fs.readFile(uri);
       const text = Buffer.from(bytes).toString('utf8');
-      repositories.push(...getHelmRepositories(parseYamlDocuments(text, uri)));
+      repositories.push(...getChartSources(parseYamlDocuments(text, uri)));
     }
     repositoryCache = {
       repositories,
@@ -434,13 +481,13 @@ export async function loadWorkspaceRepositories(
 
 export async function loadSiblingRepositories(
   activeUri: vscode.Uri,
-): Promise<HelmRepositoryResource[]> {
+): Promise<ChartSourceResource[]> {
   const uris = await collectNearbyYamlUris(activeUri);
-  const repositories: HelmRepositoryResource[] = [];
+  const repositories: ChartSourceResource[] = [];
   for (const uri of uris) {
     const bytes = await vscode.workspace.fs.readFile(uri);
     const text = Buffer.from(bytes).toString('utf8');
-    repositories.push(...getHelmRepositories(parseYamlDocuments(text, uri)));
+    repositories.push(...getChartSources(parseYamlDocuments(text, uri)));
   }
   return repositories;
 }
@@ -535,7 +582,7 @@ async function readYamlDocumentText(uri: vscode.Uri): Promise<string> {
 }
 
 export async function loadConfiguredRepositories(): Promise<
-  HelmRepositoryResource[]
+  ChartSourceResource[]
 > {
   const searchPaths = getConfiguredRepositorySearchPaths();
   if (searchPaths.length === 0) {
@@ -557,7 +604,7 @@ export async function loadConfiguredRepositories(): Promise<
 
   configuredRepositoryCachePromise = (async () => {
     const seen = new Set<string>();
-    const repositories: HelmRepositoryResource[] = [];
+    const repositories: ChartSourceResource[] = [];
     for (const searchPath of searchPaths) {
       const uris = await collectYamlUrisFromConfiguredPath(searchPath);
       for (const uri of uris) {
@@ -567,9 +614,7 @@ export async function loadConfiguredRepositories(): Promise<
         }
         seen.add(key);
         const text = await readYamlDocumentText(uri);
-        repositories.push(
-          ...getHelmRepositories(parseYamlDocuments(text, uri)),
-        );
+        repositories.push(...getChartSources(parseYamlDocuments(text, uri)));
       }
     }
     configuredRepositoryCache = {
@@ -599,7 +644,7 @@ export async function resolveChartForDocument(
     return undefined;
   }
 
-  const sameFileRepos = getHelmRepositories(parsed);
+  const sameFileRepos = getChartSources(parsed);
   const siblingRepos = await loadSiblingRepositories(document.uri);
   const workspaceRepos = await loadWorkspaceRepositories(document.uri);
   const localRepos = [...sameFileRepos, ...siblingRepos, ...workspaceRepos];
@@ -617,8 +662,37 @@ export async function resolveChartForDocument(
 
 export function resolveChartFromResources(
   release: HelmReleaseResource,
-  repositories: HelmRepositoryResource[],
+  repositories: ChartSourceResource[],
 ): ResolvedChart | undefined {
+  const chartRef = release.spec.chartRef;
+  if (chartRef?.kind === 'OCIRepository') {
+    const repository = findReferencedSource(release, chartRef, repositories);
+    if (!isOCIRepositoryResource(repository) || !repository.spec.url) {
+      return undefined;
+    }
+
+    const parsedUrl = splitOCIChartUrl(repository.spec.url);
+    if (!parsedUrl) {
+      return undefined;
+    }
+    const reference = repository.spec.ref;
+    const digest = reference?.digest;
+    const semver = digest ? undefined : reference?.semver;
+    const tag = digest || semver ? undefined : reference?.tag;
+    const version = digest ? undefined : (semver ?? (tag ? undefined : '*'));
+    return {
+      release,
+      repository,
+      chart: parsedUrl.chart,
+      version,
+      tag,
+      digest,
+      semverFilter: semver ? reference?.semverFilter : undefined,
+      repoUrl: parsedUrl.repoUrl,
+      isOci: true,
+    };
+  }
+
   const chartSpec = release.spec.chart?.spec;
   const sourceRef = chartSpec?.sourceRef;
   const chart = chartSpec?.chart;
@@ -626,22 +700,9 @@ export function resolveChartFromResources(
     return undefined;
   }
 
-  const targetNamespace = sourceRef.namespace ?? release.metadata.namespace;
-  const matchingRepositories = repositories.filter((repo) => {
-    return (
-      repo.kind === sourceRef.kind && repo.metadata.name === sourceRef.name
-    );
-  });
+  const repository = findReferencedSource(release, sourceRef, repositories);
 
-  const repository =
-    matchingRepositories.find((repo) => {
-      return (repo.metadata.namespace ?? '') === (targetNamespace ?? '');
-    }) ??
-    matchingRepositories.find((repo) => {
-      return repo.metadata.namespace === undefined;
-    });
-
-  if (!repository?.spec.url) {
+  if (!isHelmRepositoryResource(repository) || !repository.spec.url) {
     return undefined;
   }
 
@@ -653,6 +714,57 @@ export function resolveChartFromResources(
     version: chartSpec.version,
     repoUrl,
     isOci: repoUrl.startsWith('oci://') || repository.spec.type === 'oci',
+  };
+}
+
+function isHelmRepositoryResource(
+  source: ChartSourceResource | undefined,
+): source is HelmRepositoryResource {
+  return source?.kind === 'HelmRepository';
+}
+
+function isOCIRepositoryResource(
+  source: ChartSourceResource | undefined,
+): source is OCIRepositoryResource {
+  return source?.kind === 'OCIRepository';
+}
+
+function findReferencedSource(
+  release: HelmReleaseResource,
+  sourceRef: { kind: string; name: string; namespace?: string },
+  repositories: ChartSourceResource[],
+): ChartSourceResource | undefined {
+  const targetNamespace = sourceRef.namespace ?? release.metadata.namespace;
+  const matchingRepositories = repositories.filter((repo) => {
+    return (
+      repo.kind === sourceRef.kind && repo.metadata.name === sourceRef.name
+    );
+  });
+
+  return (
+    matchingRepositories.find((repo) => {
+      return (repo.metadata.namespace ?? '') === (targetNamespace ?? '');
+    }) ??
+    matchingRepositories.find((repo) => {
+      return repo.metadata.namespace === undefined;
+    })
+  );
+}
+
+function splitOCIChartUrl(
+  value: string,
+): { repoUrl: string; chart: string } | undefined {
+  const normalized = value.replace(/\/+$/, '');
+  if (!normalized.startsWith('oci://')) {
+    return undefined;
+  }
+  const separator = normalized.lastIndexOf('/');
+  if (separator <= 'oci://'.length || separator === normalized.length - 1) {
+    return undefined;
+  }
+  return {
+    repoUrl: normalized.slice(0, separator),
+    chart: normalized.slice(separator + 1),
   };
 }
 

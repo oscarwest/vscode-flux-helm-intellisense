@@ -8,6 +8,7 @@ import {
   findValuesContext,
   getHelmReleases,
   getHelmRepositories,
+  getOCIRepositories,
   invalidateWorkspaceRepositoryCache,
   parseYamlDocuments,
   resolveChartForDocument,
@@ -42,6 +43,105 @@ describe('flux parsing and resolution', () => {
     expect(documents).toHaveLength(2);
     expect(getHelmRepositories(documents)).toHaveLength(1);
     expect(getHelmReleases(documents)).toHaveLength(1);
+  });
+
+  it('resolves a HelmRelease chartRef to a same-file OCIRepository', async () => {
+    const fixturePath = path.join(fixtureRoot, 'oci', 'cert-manager.yaml');
+    const text = await fs.readFile(fixturePath, 'utf8');
+    const documents = parseYamlDocuments(text, vscode.Uri.file(fixturePath));
+    const release = getHelmReleases(documents)[0];
+    const repositories = getOCIRepositories(documents);
+
+    const resolved = resolveChartFromResources(release, repositories);
+
+    expect(repositories).toHaveLength(1);
+    expect(resolved?.repository.kind).toBe('OCIRepository');
+    expect(resolved?.repoUrl).toBe('oci://quay.io/jetstack/charts');
+    expect(resolved?.chart).toBe('cert-manager');
+    expect(resolved?.version).toBe('1.x');
+    expect(resolved?.isOci).toBe(true);
+  });
+
+  it('discovers a same-file OCIRepository through document resolution', async () => {
+    const fixturePath = path.join(fixtureRoot, 'oci', 'cert-manager.yaml');
+    const text = await fs.readFile(fixturePath, 'utf8');
+    const { document, position } = positionOf(text, 'enabled', fixturePath);
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValue([]);
+
+    const resolved = await resolveChartForDocument(
+      document as vscode.TextDocument,
+      position,
+    );
+
+    expect(resolved?.repository.kind).toBe('OCIRepository');
+    expect(resolved?.chart).toBe('cert-manager');
+    expect(resolved?.version).toBe('1.x');
+  });
+
+  it('uses OCIRepository digest precedence for chartRef resolution', () => {
+    const text = `apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata:\n  name: demo\n  namespace: apps\nspec:\n  url: oci://ghcr.io/example/charts/demo\n  ref:\n    tag: 1.2.3\n    semver: 1.x\n    digest: sha256:abcdef\n---\napiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: demo\n  namespace: apps\nspec:\n  chartRef:\n    kind: OCIRepository\n    name: demo\n  values:\n    enabled: true\n`;
+    const documents = parseYamlDocuments(
+      text,
+      vscode.Uri.file('/workspace/demo.yaml'),
+    );
+
+    const resolved = resolveChartFromResources(
+      getHelmReleases(documents)[0],
+      getOCIRepositories(documents),
+    );
+
+    expect(resolved?.version).toBeUndefined();
+    expect(resolved?.tag).toBeUndefined();
+    expect(resolved?.digest).toBe('sha256:abcdef');
+  });
+
+  it('preserves an OCIRepository tag as an exact OCI reference', () => {
+    const text = `apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata:\n  name: demo\nspec:\n  url: oci://ghcr.io/example/charts/demo\n  ref:\n    tag: v1.2.3\n---\napiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: demo\nspec:\n  chartRef:\n    kind: OCIRepository\n    name: demo\n  values:\n    enabled: true\n`;
+    const documents = parseYamlDocuments(
+      text,
+      vscode.Uri.file('/workspace/tagged.yaml'),
+    );
+
+    const resolved = resolveChartFromResources(
+      getHelmReleases(documents)[0],
+      getOCIRepositories(documents),
+    );
+
+    expect(resolved?.tag).toBe('v1.2.3');
+    expect(resolved?.version).toBeUndefined();
+  });
+
+  it('uses latest compatible semver as the fallback when OCIRepository ref is omitted', () => {
+    const text = `apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata:\n  name: demo\nspec:\n  url: oci://ghcr.io/example/charts/demo\n---\napiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: demo\nspec:\n  chartRef:\n    kind: OCIRepository\n    name: demo\n  values:\n    enabled: true\n`;
+    const documents = parseYamlDocuments(
+      text,
+      vscode.Uri.file('/workspace/latest.yaml'),
+    );
+
+    const resolved = resolveChartFromResources(
+      getHelmReleases(documents)[0],
+      getOCIRepositories(documents),
+    );
+
+    expect(resolved?.tag).toBeUndefined();
+    expect(resolved?.version).toBe('*');
+  });
+
+  it('retains semverFilter only when semver wins reference precedence', () => {
+    const text = `apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata:\n  name: demo\nspec:\n  url: oci://ghcr.io/example/charts/demo\n  ref:\n    tag: stable\n    semver: ">= 1.0.0-0"\n    semverFilter: ".*-rc.*"\n---\napiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: demo\nspec:\n  chartRef:\n    kind: OCIRepository\n    name: demo\n  values:\n    enabled: true\n`;
+    const documents = parseYamlDocuments(
+      text,
+      vscode.Uri.file('/workspace/filtered.yaml'),
+    );
+
+    const resolved = resolveChartFromResources(
+      getHelmReleases(documents)[0],
+      getOCIRepositories(documents),
+    );
+
+    expect(resolved?.version).toBe('>= 1.0.0-0');
+    expect(resolved?.tag).toBeUndefined();
+    expect(resolved?.semverFilter).toBe('.*-rc.*');
   });
 
   it('detects cursor positions under spec.values only', async () => {

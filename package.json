@@ -94,7 +94,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Additional files, directories, or glob patterns to scan for Flux HelmRepository manifests after same-file, sibling, and workspace lookup fails."
+          "description": "Additional files, directories, or glob patterns to scan for Flux HelmRepository and OCIRepository manifests after same-file, sibling, and workspace lookup fails."
         }
       }
     }

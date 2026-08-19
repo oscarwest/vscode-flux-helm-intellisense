@@ -4,7 +4,7 @@ Flux Helm IntelliSense is a VS Code extension that provides Helm values IntelliS
 
 ![Flux Helm IntelliSense completions and hover documentation](./assets/intellisense.jpg)
 
-It resolves the `HelmRepository` referenced by each `HelmRelease`, pulls the chart locally with `helm`, and reads either `values.schema.json` or `values.yaml` to provide:
+It resolves the `HelmRepository` or `OCIRepository` referenced by each `HelmRelease`, pulls the chart locally with `helm`, and reads either `values.schema.json` or `values.yaml` to provide:
 
 - key completions inside `spec.values`
 - hover descriptions and examples
@@ -16,7 +16,7 @@ It resolves the `HelmRepository` referenced by each `HelmRelease`, pulls the cha
 
 - VS Code `^1.90.0`
 - local `helm` installed and available on `PATH`, or configured through `fluxHelmValues.helmPath`
-- a workspace containing Flux `HelmRelease` resources and matching `HelmRepository` resources
+- a workspace containing Flux `HelmRelease` resources and matching `HelmRepository` or `OCIRepository` resources
 
 ## How It Works
 
@@ -24,18 +24,20 @@ For each YAML document, the extension:
 
 1. detects Flux `HelmRelease` resources
 2. scopes IntelliSense to the matching `spec.values` block
-3. resolves `spec.chart.spec.sourceRef` to a `HelmRepository`
+3. resolves either `spec.chart.spec.sourceRef` to a `HelmRepository` or `spec.chartRef` to an `OCIRepository`
 4. pulls the chart with `helm pull`
 5. reads `values.schema.json` when available, otherwise `values.yaml`
 6. caches resolved chart metadata under the VS Code global storage directory
 
 Repository lookup supports:
 
-- same-file `HelmRepository` resources
+- same-file `HelmRepository` and `OCIRepository` resources
 - sibling YAML files in the same directory
 - full workspace lookup when needed
-- configured extra repository search paths for local repos outside the current workspace
+- configured extra source search paths for local repos outside the current workspace
 - namespace-less `HelmRepository` manifests that rely on external namespace injection
+
+For OCI charts, the extension supports `OCIRepository.spec.ref.tag`, `semver`, `semverFilter`, and `digest`, using Flux's digest → semver → tag precedence. Explicit tags are pulled as exact OCI `:tag` references. When `spec.ref` is omitted, Flux defaults to the literal `latest` tag, but Helm OCI charts normally use SemVer tags; the extension therefore falls back to Helm's latest compatible stable version (`--version '*'`). For `semverFilter`, the extension asks Helm for candidates from newest to oldest, applies the filter to each OCI tag, and pulls the first match (up to 25 candidates).
 
 ## Commands
 
@@ -50,7 +52,7 @@ Repository lookup supports:
 - `fluxHelmValues.helmPath`: path to the Helm executable, default `helm`
 - `fluxHelmValues.cacheTtlHours`: successful chart cache TTL, default `24`
 - `fluxHelmValues.linting.enabled`: enable schema and `values.yaml`-backed lint warnings, default `true`
-- `fluxHelmValues.repositorySearchPaths`: extra files, folders, or glob patterns to scan for `HelmRepository` manifests after same-file, sibling, and workspace lookup fails
+- `fluxHelmValues.repositorySearchPaths`: extra files, folders, or glob patterns to scan for `HelmRepository` and `OCIRepository` manifests after same-file, sibling, and workspace lookup fails
 
 Example:
 
