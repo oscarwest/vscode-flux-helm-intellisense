@@ -6,6 +6,7 @@ import { findValuesContext } from '../src/flux';
 import {
   buildSchemaCompletionItems,
   buildValuesFallbackCompletionItems,
+  provideSchemaCompletions,
   provideSchemaDiagnostics,
   provideSchemaHover,
   provideValuesFallbackCompletions,
@@ -206,6 +207,131 @@ describe('intellisense completion builders', () => {
     expect(labels).toContain('pullPolicy');
     expect(labels).not.toContain('affinity');
     expect(labels).not.toContain('serviceIdentity');
+  });
+
+  it('offers root completions on a trailing blank line after nested values', async () => {
+    const helmRelease = `apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: demo\nspec:\n  values:\n    crds:\n      enabled: true\n      keep: false\n    config:\n      enableGatewayAPI: true\n    `;
+    const document = createTextDocument(helmRelease);
+    const position = new vscode.Position(document.lineCount - 1, 4);
+    const tempValuesPath =
+      '/tmp/flux-helm-values-trailing-root-blankline-values.yaml';
+    await fs.writeFile(
+      tempValuesPath,
+      'crds:\n  enabled: false\n  keep: true\nconfig:\n  enableGatewayAPI: false\nglobal:\n  leaderElection:\n    namespace: kube-system\n',
+      'utf8',
+    );
+
+    const items = await provideValuesFallbackCompletions(
+      document as vscode.TextDocument,
+      position,
+      {
+        chartDir: '/tmp/chart',
+        valuesPath: tempValuesPath,
+        fetchedAt: Date.now(),
+      },
+    );
+    const labels = items.map((item) => item.label);
+
+    expect(labels).toContain('global');
+    expect(labels).not.toContain('enableGatewayAPI');
+  });
+
+  it('offers nested completions at the current indentation after sibling keys', async () => {
+    const helmRelease = `apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: demo\nspec:\n  values:\n    crds:\n      enabled: true\n      keep: false\n      `;
+    const document = createTextDocument(helmRelease);
+    const position = new vscode.Position(document.lineCount - 1, 6);
+    const tempValuesPath =
+      '/tmp/flux-helm-values-trailing-nested-blankline-values.yaml';
+    await fs.writeFile(
+      tempValuesPath,
+      'crds:\n  enabled: false\n  keep: true\n  cleanupAfterUninstall: false\nglobal:\n  leaderElection:\n    namespace: kube-system\n',
+      'utf8',
+    );
+
+    const items = await provideValuesFallbackCompletions(
+      document as vscode.TextDocument,
+      position,
+      {
+        chartDir: '/tmp/chart',
+        valuesPath: tempValuesPath,
+        fetchedAt: Date.now(),
+      },
+    );
+    const labels = items.map((item) => item.label);
+
+    expect(labels).toContain('cleanupAfterUninstall');
+    expect(labels).not.toContain('global');
+  });
+
+  it('offers schema properties inside an existing sequence item', async () => {
+    const helmRelease = `apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: demo\nspec:\n  values:\n    extraEnv:\n      - name: FIRST\n        value: one\n        `;
+    const document = createTextDocument(helmRelease);
+    const position = new vscode.Position(document.lineCount - 1, 8);
+    const tempSchemaPath =
+      '/tmp/flux-helm-values-sequence-item-completion-schema.json';
+    await fs.writeFile(
+      tempSchemaPath,
+      JSON.stringify({
+        type: 'object',
+        properties: {
+          extraEnv: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                value: { type: 'string' },
+                valueFrom: { type: 'object' },
+              },
+            },
+          },
+        },
+      }),
+      'utf8',
+    );
+
+    const items = await provideSchemaCompletions(
+      document as vscode.TextDocument,
+      position,
+      {
+        chartDir: '/tmp/chart',
+        valuesSchemaPath: tempSchemaPath,
+        fetchedAt: Date.now(),
+      },
+    );
+    const labels = items.map((item) => item.label);
+
+    expect(labels).toContain('valueFrom');
+    expect(labels).not.toContain('name');
+    expect(labels).not.toContain('value');
+  });
+
+  it('uses the values.yaml item shape inside later sequence items', async () => {
+    const helmRelease = `apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: demo\nspec:\n  values:\n    extraEnv:\n      - name: FIRST\n        value: one\n      - name: SECOND\n        `;
+    const document = createTextDocument(helmRelease);
+    const position = new vscode.Position(document.lineCount - 1, 8);
+    const tempValuesPath =
+      '/tmp/flux-helm-values-later-sequence-item-values.yaml';
+    await fs.writeFile(
+      tempValuesPath,
+      'extraEnv:\n  - name: EXAMPLE\n    value: example\n    valueFrom: {}\n',
+      'utf8',
+    );
+
+    const items = await provideValuesFallbackCompletions(
+      document as vscode.TextDocument,
+      position,
+      {
+        chartDir: '/tmp/chart',
+        valuesPath: tempValuesPath,
+        fetchedAt: Date.now(),
+      },
+    );
+    const labels = items.map((item) => item.label);
+
+    expect(labels).toContain('value');
+    expect(labels).toContain('valueFrom');
+    expect(labels).not.toContain('name');
   });
 
   it('resolves fallback hovers against the correct HelmRelease in a multi-document file', async () => {

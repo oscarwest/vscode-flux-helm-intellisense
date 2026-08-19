@@ -321,11 +321,16 @@ function getFallbackEntryAtPath(
       continue;
     }
     if (isSeq(current)) {
+      if (current.items.length === 0) {
+        return undefined;
+      }
       const itemIndex = Number.parseInt(segment, 10);
       if (Number.isNaN(itemIndex)) {
         return undefined;
       }
-      current = current.items[itemIndex] as Node | undefined;
+      current = current.items[Math.min(itemIndex, current.items.length - 1)] as
+        | Node
+        | undefined;
       continue;
     }
     return undefined;
@@ -432,6 +437,16 @@ function indentationOfLine(lineText: string): number {
   return indentation;
 }
 
+function indentationAtPosition(
+  lineText: string,
+  position: vscode.Position,
+): number {
+  const lineIndentation = indentationOfLine(lineText);
+  return lineText.trim().length === 0
+    ? Math.max(lineIndentation, position.character)
+    : lineIndentation;
+}
+
 function emptyMapKeyFromLine(trimmedLine: string): string | undefined {
   const match = trimmedLine.match(/^(?:-\s+)?(.+?):(?:\s*#.*)?$/);
   if (!match) {
@@ -470,7 +485,10 @@ function getCompletionPathForBlankLine(
     return [];
   }
 
-  const currentIndent = indentationOfLine(document.lineAt(position.line).text);
+  const currentIndent = indentationAtPosition(
+    document.lineAt(position.line).text,
+    position,
+  );
   const valuesStartLine = document.positionAt(valuesKeyOffset).line;
 
   for (let line = position.line - 1; line > valuesStartLine; line -= 1) {
@@ -487,18 +505,18 @@ function getCompletionPathForBlankLine(
     ).filter((segment) => segment !== 'items');
     const emptyMapKey = emptyMapKeyFromLine(trimmed);
 
+    if (indent >= currentIndent) {
+      continue;
+    }
+
     if (emptyMapKey) {
-      if (currentIndent > indent) {
-        return pathWithMapKey(previousPath, emptyMapKey);
-      }
-      return previousPath.slice(0, -1);
+      return pathWithMapKey(previousPath, emptyMapKey);
     }
 
-    if (currentIndent <= indent) {
-      return previousPath.slice(0, -1);
-    }
-
-    return previousPath;
+    const previousNode = getNodeAtPath(valuesRoot, previousPath);
+    return isMap(previousNode) || isSeq(previousNode)
+      ? previousPath
+      : previousPath.slice(0, -1);
   }
 
   return [];
@@ -516,9 +534,7 @@ export async function provideSchemaCompletions(
     return [];
   }
 
-  const path = (location?.path ?? []).filter(
-    (segment) => !/^\d+$/.test(segment),
-  );
+  const path = location?.path ?? [];
   const parentSchema = getSchemaAtPath(schema, path);
   const existingNode = getNodeAtPath(
     (location?.valuesRoot ?? context?.valuesNode) as Node | undefined,
@@ -543,7 +559,7 @@ export async function provideSchemaHover(
   if (!schema || !location) {
     return undefined;
   }
-  const path = location.path.filter((segment) => !/^\d+$/.test(segment));
+  const path = location.path;
   const currentSchema = getSchemaAtPath(schema, path);
   const docs = currentSchema
     ? documentationForSchema(currentSchema)
@@ -585,10 +601,7 @@ export async function provideSchemaDiagnostics(
       return;
     }
     if (isMap(node)) {
-      const schemaPath = path.filter((segment) => !/^\d+$/.test(segment));
-      const currentSchema = schema
-        ? getSchemaAtPath(schema, schemaPath)
-        : undefined;
+      const currentSchema = schema ? getSchemaAtPath(schema, path) : undefined;
       const currentValuesNode = getValuesNodeAtPath(
         valuesDoc?.contents as Node | undefined,
         path,
@@ -656,10 +669,11 @@ export async function provideValuesFallbackCompletions(
     return [];
   }
 
-  const path = (location?.path ?? []).filter(
-    (segment) => !/^\d+$/.test(segment),
+  const path = location?.path ?? [];
+  const node = getValuesNodeAtPath(
+    valuesDoc.contents as Node | undefined,
+    path,
   );
-  const node = getNodeAtPath(valuesDoc.contents as Node | undefined, path);
   const existingNode = getNodeAtPath(
     (location?.valuesRoot ?? context?.valuesNode) as Node | undefined,
     path,
@@ -705,7 +719,7 @@ export async function provideValuesFallbackHover(
   if (!valuesDoc || !location) {
     return undefined;
   }
-  const path = location.path.filter((segment) => !/^\d+$/.test(segment));
+  const path = location.path;
   const entry = getFallbackEntryAtPath(
     valuesDoc.contents as Node | undefined,
     path,

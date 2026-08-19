@@ -173,6 +173,14 @@ describe('flux parsing and resolution', () => {
     ).toHaveLength(1);
   });
 
+  it('does not treat later indented spec blocks as values', () => {
+    const text = `apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: demo\nspec:\n  values:\n    enabled: true\n  install:\n    remediation:\n      retries: 3\n      `;
+    const document = createTextDocument(text) as vscode.TextDocument;
+    const position = new vscode.Position(document.lineCount - 1, 6);
+
+    expect(findValuesContext(document, position)).toBeUndefined();
+  });
+
   it('resolves HelmRepository by release namespace when sourceRef namespace is absent', async () => {
     const releasePath = path.join(
       fixtureRoot,

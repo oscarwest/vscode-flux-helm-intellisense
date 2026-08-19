@@ -273,10 +273,32 @@ function isLikelyInValuesBlock(
   valuesKeyOffset: number,
 ): boolean {
   const valuesStart = document.positionAt(valuesKeyOffset);
+  if (position.line <= valuesStart.line) {
+    return false;
+  }
+
   const valuesIndent = indentationOf(document.lineAt(valuesStart.line).text);
   const currentLine = document.lineAt(position.line).text;
-  const currentIndent = indentationOf(currentLine);
-  return position.line > valuesStart.line && currentIndent > valuesIndent;
+  const currentIndent =
+    currentLine.trim().length === 0
+      ? Math.max(indentationOf(currentLine), position.character)
+      : indentationOf(currentLine);
+  if (currentIndent <= valuesIndent) {
+    return false;
+  }
+
+  for (let line = valuesStart.line + 1; line <= position.line; line += 1) {
+    const text = document.lineAt(line).text;
+    const trimmed = text.trim();
+    if (trimmed.length === 0 || trimmed.startsWith('#')) {
+      continue;
+    }
+    if (indentationOf(text) <= valuesIndent) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function nodeContainsOffset(node: Node | undefined, offset: number): boolean {
