@@ -1,3 +1,9 @@
+## [1.3.0](https://github.com/oscarwest/vscode-flux-helm-intellisense/compare/v1.2.0...v1.3.0) (2026-08-19)
+
+### Features
+
+* add OCIRepository support ([f6a0f93](https://github.com/oscarwest/vscode-flux-helm-intellisense/commit/f6a0f93c0d32b1184c03e27babbb78f3f61c48ce))
+
 ## [1.2.0](https://github.com/oscarwest/vscode-flux-helm-intellisense/compare/v1.1.0...v1.2.0) (2026-06-18)
 
 ### Features
